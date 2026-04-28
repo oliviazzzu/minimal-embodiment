@@ -1,0 +1,19 @@
+{
+  "name": "minimal-embodiment",
+  "version": "0.1.0",
+  "description": "Bridge service for the ESP32-based sensor body described in the accompanying paper, A Minimal Self-Perceiving Embodiment for Large Language Models.",
+  "main": "dist/http-bridge.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "serve": "node dist/http-bridge.js"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.2",
+    "typescript": "^6.0.2"
+  }
+}
