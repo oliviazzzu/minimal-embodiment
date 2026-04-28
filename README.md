@@ -28,6 +28,10 @@ scripts/measure_loops.mjs   Reproduction script for §6.3: fires N reps of
                             tables.
 scripts/serve.sh            Convenience wrapper: starts the bridge with
                             an auth token from the environment.
+data/                       Validation data from the paper's §6.3 run:
+                            660 trials (30 reps × 22 conditions), raw
+                            JSONL plus the two summary CSVs that back
+                            Tables 3 and 4.
 ```
 
 The bridge runs only on the Node.js standard library (no production
@@ -72,18 +76,26 @@ listed in the same comment.
 
 ## Reproducing §6.3 (self-perception loops)
 
+The original validation run is checked into `data/`:
+
+- `data/loops_raw.jsonl` — 660 trial records (30 reps × 22 conditions)
+- `data/loops_haptic.csv` — per-effect summaries backing Table 4
+- `data/loops_audio.csv` — per-tone summaries backing Table 3
+
+To reproduce on your own hardware:
+
 ```sh
 export US_BRIDGE_TOKEN="…"                  # same token the bridge is using
 export US_BRIDGE_HOST="https://your-host"   # public HTTPS endpoint
 node scripts/measure_loops.mjs
-# Writes: data/loops_raw.jsonl
-#         data/loops_haptic.csv
-#         data/loops_audio.csv
+# Overwrites: data/loops_raw.jsonl
+#             data/loops_haptic.csv
+#             data/loops_audio.csv
 ```
 
 The script runs 30 reps × 22 conditions (11 haptic + 10 audio + 1 baseline),
-randomized and interleaved, ~43 minutes total. Output goes to `./data/`
-(gitignored). Override the directory with `US_OUTPUT_DIR=…` if you want.
+randomized and interleaved, ~43 minutes total. Override the output directory
+with `US_OUTPUT_DIR=…` if you want to keep both runs side by side.
 
 ## Citation
 

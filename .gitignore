@@ -9,9 +9,6 @@ dist/
 .env.*
 *.local
 
-# Generated data (created by scripts/measure_loops.mjs)
-data/
-
 # Editor / OS
 .DS_Store
 .vscode/
