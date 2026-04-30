@@ -1,5 +1,7 @@
 # minimal-embodiment
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.19903098.svg)](https://doi.org/10.5281/zenodo.19903098)
+
 Reference implementation of the bridge service and microcontroller firmware
 described in the paper:
 
