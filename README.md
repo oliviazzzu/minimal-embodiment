@@ -5,7 +5,7 @@ described in the paper:
 
 > **A Minimal Self-Perceiving Embodiment for Large Language Models**
 > Olivia Zhu, 2026.
-> Preprint: *(Zenodo DOI will be added here once the deposit is published.)*
+> Preprint: <https://doi.org/10.5281/zenodo.19903098>
 
 The system gives a large language model a small, real, persistent body: an
 ESP32 with four sensor modules (environment, light, motion, sound) and three
@@ -99,8 +99,21 @@ with `US_OUTPUT_DIR=…` if you want to keep both runs side by side.
 
 ## Citation
 
-If you use this code in academic work, please cite the paper *(citation block
-will be added here once the deposit is published).*
+If you use this code in academic work, please cite the paper:
+
+> Zhu, O. (2026). *A Minimal Self-Perceiving Embodiment for Large Language
+> Models.* Zenodo. <https://doi.org/10.5281/zenodo.19903098>
+
+```bibtex
+@misc{zhu2026minimal,
+  author    = {Zhu, Olivia},
+  title     = {A Minimal Self-Perceiving Embodiment for Large Language Models},
+  year      = {2026},
+  publisher = {Zenodo},
+  doi       = {10.5281/zenodo.19903098},
+  url       = {https://doi.org/10.5281/zenodo.19903098}
+}
+```
 
 ## License
 
