@@ -6,8 +6,7 @@ If you discover a security vulnerability in this project — for example, a way
 for an unauthorized party to access a deployed bridge, drive the device, or
 extract sensor data — please **do not file a public issue**.
 
-Use **GitHub's private vulnerability reporting** instead:
-👉 [Open a private security advisory](https://github.com/oliviazzzu/minimal-embodiment/security/advisories/new)
+Use **GitHub's private vulnerability reporting** instead — [open a private security advisory](https://github.com/oliviazzzu/minimal-embodiment/security/advisories/new).
 
 I'll aim to acknowledge any report within **7 days** and let you know what
 the timeline looks like for a fix. Please give me a reasonable window to
