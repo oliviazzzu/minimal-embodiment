@@ -41,12 +41,6 @@ vulnerabilities — please don't file reports about them:
 - **Side-channel timing on echo measurements** — the echo windows are
   short and not constant-time; they're not a security primitive.
 
-## Supported Versions
-
-This is a research/personal project, not a hardened product. The latest
-commit on `main` is what I'll respond to security reports on. Older
-commits are not maintained.
-
 ---
 
 Thank you for helping keep the project, and the body it animates, safe.
