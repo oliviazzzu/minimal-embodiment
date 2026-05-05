@@ -120,3 +120,9 @@ If you use this code in academic work, please cite the paper:
 ## License
 
 MIT — see [LICENSE](LICENSE).
+
+## Disclaimer
+
+This project has no official token, coin, NFT, or financial product. I have
+not created, authorized, endorsed, or claimed any token related to this
+project.
