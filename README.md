@@ -45,7 +45,7 @@ time only.
 This section assumes you already have the hardware built and flashed. If
 you are starting from scratch — no ESP32, no soldering experience, no
 bridge running — see the step-by-step
-[**Build Guide**](docs/BUILD_GUIDE.md) instead.
+[**Build Guide**](BUILD_GUIDE.md) instead.
 
 ```sh
 # 1. Build the bridge.

@@ -51,7 +51,7 @@ save you a lap.
 
 If you are a researcher who wants to reproduce the §6.3 measurement
 results from the paper, see `scripts/measure_loops.mjs` and the
-[Reproducing §6.3](../README.md#reproducing-63-self-perception-loops)
+[Reproducing §6.3](README.md#reproducing-63-self-perception-loops)
 section of the README. This guide is the longer "build it from zero"
 path.
 
