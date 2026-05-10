@@ -15,6 +15,12 @@ output channels (haptic, OLED face, piezo buzzer). Two of the output channels
 are coupled back to input channels, so the model can hear itself speak and
 feel itself tap — the "self-perception loops" of §6 in the paper.
 
+The repository state described by the paper is pinned at the `v1.0-paper`
+tag — `git checkout v1.0-paper` to reproduce the §6.3 self-perception
+measurements against the system exactly as described. The `main` branch
+is the living project; new senses (olfaction, etc.) accumulate there
+beyond the paper's scope.
+
 ## What is in this repository
 
 ```
