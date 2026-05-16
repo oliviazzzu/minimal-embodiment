@@ -1,5 +1,5 @@
 /*
- * sensor_body — ESP32 + BME280 + BH1750 + MPU-6050 + DRV2605L
+ * sensor_body — ESP32 + BME280/BME688 + BH1750 + MPU-6050 + DRV2605L
  *               + SSD1306 OLED + KY-006 + INMP441
  *
  * Microcontroller firmware for the minimal self-perceiving embodiment
@@ -8,7 +8,9 @@
  * (mic-during-buzzer, MPU-during-haptic) back to the bridge service.
  *
  * Sensor inputs:
- *   BME280       — temperature / humidity / pressure (I2C)
+ *   BME280 or BME688 — temperature, humidity, pressure (+ raw gas
+ *                  resistance on BME688, useful as an air-quality / VOC
+ *                  proxy) (I2C)
  *   BH1750       — illuminance (I2C)
  *   MPU-6050     — 3-axis accel / 3-axis gyro (I2C); ESP32-side preprocessing
  *                  collapses raw accel into a motion state (still / walking /
@@ -32,7 +34,8 @@
  *
  * HARDWARE
  *   ESP32 DevKit C V4         — main controller
- *   GY-BME280                 — I2C, address 0x76 (temp / humidity / pressure)
+ *   GY-BME280 or GY-BME688    — I2C, address 0x76 (temp / humidity / pressure;
+ *                                BME688 also reports gas resistance)
  *   GY-302 BH1750             — I2C, address 0x23 (light, ADDR floating)
  *   GY-521 MPU-6050           — I2C, address 0x68 (motion, AD0 floating)
  *   DRV2605L + ERM coin motor — I2C, address 0x5A (haptic OUTPUT)
@@ -60,8 +63,9 @@
  *   INMP441 L/R         -> − rail (tied to GND → mic acts as left channel)
  *
  * LIBRARIES TO INSTALL (Arduino IDE -> Library Manager)
- *   - "Adafruit BME280 Library"
- *   - "Adafruit Unified Sensor"     (pulled in with BME280)
+ *   - "Adafruit BME280 Library"     (if using BME280)
+ *   - "Adafruit BME680 Library"     (if using BME688 — same driver works for 688)
+ *   - "Adafruit Unified Sensor"     (pulled in by either BME driver)
  *   - "BH1750" by Christopher Laws
  *   - "Adafruit MPU6050"            (pulls in Adafruit BusIO)
  *   - "Adafruit DRV2605 Library"
@@ -82,6 +86,7 @@
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BME280.h>
+#include <Adafruit_BME680.h>   // BME688 uses the BME680 driver
 #include <BH1750.h>
 #include <Adafruit_MPU6050.h>
 #include <Adafruit_DRV2605.h>
@@ -111,6 +116,8 @@ const float MOTION_WALKING_MAX_STDDEV = 2.0f;  // below this → "walking", else
 // ---- GLOBALS -------------------------------------------------------------
 
 Adafruit_BME280 bme;
+Adafruit_BME680 bme688;
+bool useBME688 = false;          // set to true at boot if BME688 is detected
 BH1750          lightMeter;
 Adafruit_MPU6050 mpu;
 Adafruit_DRV2605 drv;
@@ -201,12 +208,28 @@ void setup() {
 
   Wire.begin();  // SDA=21, SCL=22 on ESP32 DevKit (default)
 
-  // --- Initialize BME280 (optional) ---
-  if (bme.begin(0x76) || bme.begin(0x77)) {
+  // --- Initialize BME688 or BME280 (optional) ---
+  // Try BME688 first (superset — adds raw gas-resistance sensing,
+  // useful as an air-quality / VOC proxy). If not found, fall back to
+  // BME280. Both share I2C address 0x76 by default, so only one can be
+  // present at a time. Either sensor works for everything the paper
+  // describes; BME688 additionally unlocks the gas reading.
+  if (bme688.begin(0x76) || bme688.begin(0x77)) {
     bmeOk = true;
+    useBME688 = true;
+    // Standard gas-resistance sensing profile: 320°C heater for 150 ms.
+    bme688.setTemperatureOversampling(BME680_OS_8X);
+    bme688.setHumidityOversampling(BME680_OS_2X);
+    bme688.setPressureOversampling(BME680_OS_4X);
+    bme688.setIIRFilterSize(BME680_FILTER_SIZE_3);
+    bme688.setGasHeater(320, 150);
+    Serial.println("[bme688] ok — gas sensing enabled");
+  } else if (bme.begin(0x76) || bme.begin(0x77)) {
+    bmeOk = true;
+    useBME688 = false;
     Serial.println("[bme280] ok");
   } else {
-    Serial.println("[bme280] not found — continuing without temperature/humidity/pressure");
+    Serial.println("[bme] not found — continuing without temperature/humidity/pressure");
   }
 
   // --- Initialize BH1750 (optional) ---
@@ -1003,13 +1026,23 @@ void loop() {
   lastPostMs = now;
 
   // --- Read sensors (each optional) ---
-  float tempC   = NAN;
-  float humPct  = NAN;
-  float presHpa = NAN;
+  float tempC       = NAN;
+  float humPct      = NAN;
+  float presHpa     = NAN;
+  float gasResKOhms = NAN;  // BME688 only — gas resistance in kΩ
   if (bmeOk) {
-    tempC   = bme.readTemperature();
-    humPct  = bme.readHumidity();
-    presHpa = bme.readPressure() / 100.0f;  // Pa -> hPa
+    if (useBME688) {
+      if (bme688.performReading()) {
+        tempC       = bme688.temperature;
+        humPct      = bme688.humidity;
+        presHpa     = bme688.pressure / 100.0f;
+        gasResKOhms = bme688.gas_resistance / 1000.0f;  // Ω -> kΩ
+      }
+    } else {
+      tempC   = bme.readTemperature();
+      humPct  = bme.readHumidity();
+      presHpa = bme.readPressure() / 100.0f;  // Pa -> hPa
+    }
   }
 
   float lightLux = NAN;
@@ -1032,13 +1065,17 @@ void loop() {
 
   // --- Log to serial (include stddev for tuning) ---
   Serial.printf(
-    "[sensor] T=%.1fC H=%.0f%% P=%.0fhPa L=%.0flux N=%.0fdB(%s) motion=%s (stddev=%.2f)\n",
+    "[sensor] T=%.1fC H=%.0f%% P=%.0fhPa L=%.0flux N=%.0fdB(%s) motion=%s (stddev=%.2f)",
     tempC, humPct, presHpa, lightLux,
     noiseDb,
     noiseEnv ? noiseEnv : "?",
     motionState ? motionState : "unknown",
     motionStddev
   );
+  if (useBME688 && !isnan(gasResKOhms)) {
+    Serial.printf(" gas=%.1fkOhm", gasResKOhms);
+  }
+  Serial.println();
 
   // Nothing at all to post? Skip — don't generate empty requests.
   if (!bmeOk && !bhOk && !mpuOk && !micOk) {
@@ -1065,6 +1102,9 @@ void loop() {
   if (bmeOk && !isnan(tempC))   { url += "&temperature_c="; url += String(tempC, 2); }
   if (bmeOk && !isnan(humPct))  { url += "&humidity_pct=";  url += String(humPct, 1); }
   if (bmeOk && !isnan(presHpa)) { url += "&pressure_hpa=";  url += String(presHpa, 1); }
+  if (useBME688 && !isnan(gasResKOhms)) {
+    url += "&gas_resistance_kohms="; url += String(gasResKOhms, 1);
+  }
   if (bhOk  && !isnan(lightLux)){ url += "&light_lux=";     url += String(lightLux, 1); }
   if (motionState)              { url += "&state=";         url += motionState; }
   if (micOk && !isnan(noiseDb)) { url += "&noise_db=";      url += String(noiseDb, 1); }

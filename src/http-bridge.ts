@@ -40,6 +40,11 @@ const API_PATHS: ReadonlySet<string> = new Set([
   "/haptic",
   "/face",
   "/beep",
+  // Multi-note batch — single fetch queues N beep commands so a remote
+  // LLM client (which may have multi-second latency per HTTP request) can
+  // play a recognizable melody instead of N notes spread across a minute
+  // of dead air.
+  "/melody",
   "/command/poll",
   // The microcontroller reports back what the mic heard while the buzzer
   // was playing, piggybacked on the next /command/poll request. /beep/echo
@@ -71,6 +76,7 @@ type SensorReading = {
     light_lux?: number;
     noise_db?: number;
     noise_env?: "quiet" | "moderate" | "noisy" | "loud";
+    gas_resistance_kohms?: number; // BME688 only
   };
   motion?: {
     state?: "still" | "walking" | "running" | "unknown";
@@ -329,6 +335,7 @@ function buildReading(args: unknown): SensorReading {
     light_lux: asOptionalNumber(pick(envIn, "light_lux")),
     noise_db: asOptionalNumber(pick(envIn, "noise_db")),
     noise_env: asOptionalEnum(pick(envIn, "noise_env"), NOISE_ENVS),
+    gas_resistance_kohms: asOptionalNumber(pick(envIn, "gas_resistance_kohms")),
   };
 
   const motion = {
@@ -472,7 +479,9 @@ type PendingCommand =
   | { type: "beep"; frequency: number; duration_ms: number };
 
 const commandQueue: PendingCommand[] = [];
-const MAX_COMMAND_QUEUE = 8;
+// Sized to hold a single full /melody burst (MAX_MELODY_NOTES notes);
+// see the melody section below for the rationale.
+const MAX_COMMAND_QUEUE = 64;
 
 type CommandResolver = (cmd: PendingCommand | null) => void;
 const commandPollers: CommandResolver[] = [];
@@ -926,6 +935,112 @@ async function handleBeep(args: unknown): Promise<{
   };
 }
 
+// ---- melody (multi-note beep batch) --------------------------------------
+//
+// Single GET → N beep commands queued at once. The device drains the queue
+// at its ~500 ms poll cadence and plays the melody over a few seconds.
+// Necessary for LLM clients with high per-fetch latency, where N sequential
+// single-note /beep calls would land with multi-second gaps between notes —
+// not music.
+//
+// Two ways to call:
+//   ?song=<name>   — server-side library lookup (short URL; works for
+//                    clients whose web_fetch may reject very long URLs)
+//   ?notes=<csv>   — inline CSV: freqXduration,freqXduration,...
+// Note tempo is set by the device's poll cadence, not by duration_ms —
+// duration_ms only controls how long each tone sounds within its slot.
+
+// Upper bound on notes per /melody call. Aligned with MAX_COMMAND_QUEUE so a
+// single melody can in principle fill the queue but not exceed it; the
+// largest shipped SONGS preset (twinkle_full, 42 notes) fits comfortably.
+const MAX_MELODY_NOTES = 64;
+
+type Note = { frequency: number; duration_ms: number };
+
+const SONGS: Record<string, Note[]> = (() => {
+  // Twinkle, twinkle, little star — each phrase is 7 notes (6 quarters + 1 half).
+  // Pitches: C4=262 D4=294 E4=330 F4=349 G4=392 A4=440.
+  const Q = 280; // quarter-note tone duration
+  const H = 500; // phrase-ending half-note tone duration
+  const FIN = 800; // final-note tone duration (lets it ring)
+  const phrase = (pitches: number[], lastDur: number): Note[] =>
+    pitches.map((f, i) => ({
+      frequency: f,
+      duration_ms: i === pitches.length - 1 ? lastDur : Q,
+    }));
+  const p1 = phrase([262, 262, 392, 392, 440, 440, 392], H); // twinkle, twinkle, little star
+  const p2 = phrase([349, 349, 330, 330, 294, 294, 262], H); // how I wonder what you are
+  const p3 = phrase([392, 392, 349, 349, 330, 330, 294], H); // up above the world so high
+  const p4 = phrase([392, 392, 349, 349, 330, 330, 294], H); // like a diamond in the sky
+  const p5 = phrase([262, 262, 392, 392, 440, 440, 392], H); // twinkle, twinkle, little star
+  const p6 = phrase([349, 349, 330, 330, 294, 294, 262], FIN); // how I wonder what you are
+  return {
+    twinkle_part1: [...p1, ...p2, ...p3], // 21 notes — first half
+    twinkle_part2: [...p4, ...p5, ...p6], // 21 notes — second half
+    twinkle_full: [...p1, ...p2, ...p3, ...p4, ...p5, ...p6], // 42 notes — whole song
+  };
+})();
+const SONG_NAMES = Object.keys(SONGS);
+
+function handleMelody(args: unknown): {
+  count: number;
+  song: string | null;
+  notes: Note[];
+} {
+  const songRaw = asOptionalString(getField(args, "song"));
+  let parsed: Note[];
+  let songName: string | null = null;
+
+  if (songRaw !== undefined) {
+    if (!(songRaw in SONGS)) {
+      throw new Error(`song must be one of: ${SONG_NAMES.join(", ")}`);
+    }
+    parsed = SONGS[songRaw];
+    songName = songRaw;
+  } else {
+    const notesRaw = getField(args, "notes");
+    if (typeof notesRaw !== "string" || notesRaw.length === 0) {
+      throw new Error(
+        `missing \`song\` (one of: ${SONG_NAMES.join(", ")}) or \`notes\` (CSV: freqXduration,...)`,
+      );
+    }
+    const tokens = notesRaw.split(",").map((s) => s.trim()).filter(Boolean);
+    if (tokens.length === 0) {
+      throw new Error("`notes` is empty");
+    }
+    if (tokens.length > MAX_MELODY_NOTES) {
+      throw new Error(`too many notes (max ${MAX_MELODY_NOTES})`);
+    }
+    parsed = [];
+    for (const tok of tokens) {
+      const m = /^(\d+)[xX](\d+)$/.exec(tok);
+      if (!m) {
+        throw new Error(
+          `bad note "${tok}" — expected freqXduration (e.g. 262x300)`,
+        );
+      }
+      const frequency = parseInt(m[1], 10);
+      const duration_ms = parseInt(m[2], 10);
+      if (frequency < 100 || frequency > 10000) {
+        throw new Error(`frequency out of range (100-10000 Hz): ${frequency}`);
+      }
+      if (duration_ms < 1 || duration_ms > 5000) {
+        throw new Error(`duration_ms out of range (1-5000): ${duration_ms}`);
+      }
+      parsed.push({ frequency, duration_ms });
+    }
+  }
+
+  for (const note of parsed) {
+    queueCommand({
+      type: "beep",
+      frequency: note.frequency,
+      duration_ms: note.duration_ms,
+    });
+  }
+  return { count: parsed.length, song: songName, notes: parsed };
+}
+
 // "true" / "1" / "yes" → true; everything else → false. Same coercion the
 // rest of the bridge uses for boolean-shaped query string params.
 function isTruthyParam(v: unknown): boolean {
@@ -1015,6 +1130,11 @@ async function dispatch(
     }
     case "/beep": {
       const result = await handleBeep(args);
+      sendJson(res, 200, { ok: true, ...result });
+      return;
+    }
+    case "/melody": {
+      const result = handleMelody(args);
       sendJson(res, 200, { ok: true, ...result });
       return;
     }
@@ -1112,6 +1232,7 @@ server.listen(PORT, () => {
   log(`  GET /face              queue OLED expression (name: ${FACE_NAMES.join("|")})`);
   log(`  GET /beep              queue buzzer tone (name: ${SOUND_NAMES.join("|")}, or frequency=100-10000 Hz + duration_ms=1-5000)`);
   log("                         add &wait_echo=true to block until the mic hears it back");
+  log(`  GET /melody            queue multi-note batch (song=${SONG_NAMES.join("|")}, or notes=freqXduration,... up to ${MAX_MELODY_NOTES})`);
   log("  GET /beep/echo         most recent audio-loop self-perception observation");
   log("  GET /haptic/echo       most recent haptic-loop self-perception observation");
   log("  GET /haptic/baseline   wide-band MPU sample without firing the motor (noise-floor measurement)");
