@@ -24,9 +24,10 @@ beyond the paper's scope.
 ## What is in this repository
 
 ```
-src/http-bridge.ts          Single-file bridge service (~1.2k lines, no
-                            external runtime dependencies). Implements the
-                            nine endpoints of Table 2 in the paper.
+src/http-bridge.ts          Single-file bridge service (no external
+                            runtime dependencies). Implements the paper
+                            endpoints, plus living-project extensions
+                            (e.g. /melody) added on `main` after v1.0.
 firmware/sensor_body/       Arduino sketch (~1.1k lines of C++) for the
                             ESP32. Reads sensors, drives haptic / OLED /
                             buzzer, reports self-perception echoes.

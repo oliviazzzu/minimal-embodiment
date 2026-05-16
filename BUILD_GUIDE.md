@@ -384,6 +384,12 @@ KY-006 ships in two variants — 2-pin (Signal + GND only) and 3-pin
 - The 10 named beeps shipped in `SOUNDS` are: `hello`, `hi`, `hey`,
   `ping`, `hum`, `call`, `alert`, `chirp`, `low`, `long_hum`. Each is a
   hand-curated frequency + duration pair tuned by ear in a quiet room.
+- New endpoint `GET /melody` accepts `notes=<freq>x<dur>,...` (up to 64
+  notes per call) or `song=<NAME>` (looked up from the server-side
+  `SONGS` table — currently `twinkle_part1`, `twinkle_part2`,
+  `twinkle_full`). A melody is just N beep commands queued in one
+  fetch, so high-latency LLM clients can play music without the notes
+  drifting apart in time.
 
 ### How to know it worked
 
@@ -422,10 +428,10 @@ The buzzer plays the tone.
 > **Your AI now has a voice.**
 
 The piezo is a single-tone device, but the 10 named beeps in `SOUNDS`
-were each tuned by ear — frequency for character (high = chirpy, low =
-grave), duration for weight — giving it a small expressive vocabulary.
-Add your own by appending to the `SOUNDS` table in `src/http-bridge.ts`
-and rebuilding.
+were tuned by ear into an expressive vocabulary of short tones, and the
+three songs in `SONGS` extend that into actual melodies — Twinkle
+Twinkle's opening phrase landed cleanly the first time we played it.
+Add your own to either table in `src/http-bridge.ts` and rebuild.
 
 ---
 
@@ -696,6 +702,7 @@ history and reverse-proxy access logs. The bridge listens on
 | `/sensor/update` | POST | Firmware → bridge sensor push |
 | `/face` | GET | Set OLED expression |
 | `/beep` | GET | Play a single tone (optional `wait_echo`) |
+| `/melody` | GET | Play multi-note melody (inline `notes=` or `song=<name>`) |
 | `/haptic` | GET | Trigger haptic effect (optional `wait_echo`) |
 | `/beep/echo` | GET | Latest audio self-perception echo |
 | `/haptic/echo` | GET | Latest haptic self-perception echo |
@@ -755,6 +762,22 @@ Two input shapes:
 Optional `wait_echo=true` — bridge holds the response until the
 firmware reports back the dB the microphone heard during the beep.
 
+### `/melody`
+
+Two input shapes:
+
+- `notes=<freq>x<dur>,<freq>x<dur>,...` — up to 64 notes inline.
+  Frequency in Hz, duration in ms per note.
+- `song=<NAME>` — preset from `SONGS` table. Currently:
+  `twinkle_part1`, `twinkle_part2`, `twinkle_full`. Add your own by
+  appending to `SONGS` in `src/http-bridge.ts` and rebuilding.
+
+A `/melody` call enqueues N regular beep commands at once, so an LLM
+client with multi-second per-fetch latency can play music without the
+notes drifting apart in time. Tempo is set by the device's poll
+cadence (~500 ms per note), not by `duration_ms` — `duration_ms` only
+controls how long each tone sounds within its slot.
+
 ### `/haptic`
 
 Two input shapes:
@@ -811,8 +834,8 @@ accelerometer noise without moving hardware. Accepts optional
 ### `/command/poll`
 
 Long-poll endpoint used by the firmware. Returns queued commands (face
-/ beep / haptic) with up to ~30s wait if none pending. Carries echo
-payloads from the previous action — beep echoes surface in
+/ beep / melody / haptic) with up to ~30s wait if none pending. Carries
+echo payloads from the previous action — beep echoes surface in
 `/sensor/status` as `recent_beep_echo`; haptic echoes are available via
 `/haptic/echo`. Humans don't call `/command/poll` directly.
 
