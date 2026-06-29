@@ -133,6 +133,21 @@ Adafruit_SSD1306 oled(OLED_WIDTH, OLED_HEIGHT, &Wire, -1);  // -1 = no reset pin
 // channel allocation internally).
 #define BUZZER_PIN 25
 
+// FSR 402 force-sensitive resistor — analog touch input.
+// Voltage divider: 3.3V → FSR → GPIO 36 → 10kΩ → GND.
+// ADC reads 0 (no pressure) to ~4095 (hard press).
+#define FSR_PIN             36
+#define FSR_TOUCH_THRESHOLD 100   // above this ADC value → touched
+
+// NTC 10K thermistor (MF52D) — skin temperature.
+// Voltage divider: 3.3V → 10kΩ → GPIO 39 → thermistor → GND.
+// At 25°C thermistor = 10kΩ, ADC ≈ 2048. Hand warmth → ADC drops.
+#define THERM_PIN           39
+#define THERM_R_FIXED       10000.0f
+#define THERM_R0            10000.0f  // resistance at 25°C
+#define THERM_T0            298.15f   // 25°C in Kelvin
+#define THERM_B             3950.0f   // B-parameter for MF52D 10K
+
 // INMP441 I2S MEMS microphone.
 // Uses the modern arduino-esp32 3.x I2S driver (driver/i2s_std.h). I2S0 is
 // dedicated to mic; pins are independent of the I2C bus the other sensors
@@ -190,6 +205,8 @@ bool drvOk = false;
 bool oledOk = false;
 bool buzzerOk = false;
 bool micOk = false;
+bool fsrOk = false;
+bool thermOk = false;
 
 // Handle for the I2S RX channel (INMP441). Held globally so
 // readMicNoiseDb() can pull samples from anywhere; opened once in setup.
@@ -345,6 +362,32 @@ void setup() {
     } else {
       Serial.printf("[inmp441] init failed (new=%d, std=%d, enable=%d) — continuing without mic\n",
                     e1, e2, e3);
+    }
+  }
+
+  // --- Initialize FSR 402 ---
+  // analogRead() always returns a value; just log the baseline (should be
+  // near 0 with no pressure) and mark ready.
+  {
+    int baseline = analogRead(FSR_PIN);
+    fsrOk = true;
+    Serial.printf("[fsr] GPIO %d baseline = %d (threshold = %d)\n",
+                  FSR_PIN, baseline, FSR_TOUCH_THRESHOLD);
+  }
+
+  // --- Initialize NTC thermistor ---
+  {
+    int baseline = analogRead(THERM_PIN);
+    if (baseline > 0 && baseline < 4095) {
+      float r = THERM_R_FIXED * baseline / (4095.0f - baseline);
+      float tK = 1.0f / (1.0f/THERM_T0 + (1.0f/THERM_B) * logf(r/THERM_R0));
+      thermOk = true;
+      Serial.printf("[therm] GPIO %d baseline ADC = %d (R=%.0f ohm, T=%.1f°C)\n",
+                    THERM_PIN, baseline, r, tK - 273.15f);
+    } else {
+      thermOk = false;
+      Serial.printf("[therm] GPIO %d invalid baseline ADC = %d — thermistor offline?\n",
+                    THERM_PIN, baseline);
     }
   }
 
@@ -1075,6 +1118,24 @@ void loop() {
     noiseEnv = classifyNoise(noiseDb);
   }
 
+  int fsrRaw = 0;
+  bool touchDetected = false;
+  if (fsrOk) {
+    fsrRaw = analogRead(FSR_PIN);
+    touchDetected = (fsrRaw > FSR_TOUCH_THRESHOLD);
+  }
+
+  int thermRaw = 0;
+  float skinTempC = NAN;
+  if (thermOk) {
+    thermRaw = analogRead(THERM_PIN);
+    if (thermRaw > 0 && thermRaw < 4095) {
+      float r = THERM_R_FIXED * thermRaw / (4095.0f - thermRaw);
+      float tK = 1.0f / (1.0f/THERM_T0 + (1.0f/THERM_B) * logf(r/THERM_R0));
+      skinTempC = tK - 273.15f;
+    }
+  }
+
   // --- Log to serial (include stddev for tuning) ---
   Serial.printf(
     "[sensor] T=%.1fC H=%.0f%% P=%.0fhPa L=%.0flux N=%.0fdB(%s) motion=%s (stddev=%.2f)",
@@ -1087,10 +1148,16 @@ void loop() {
   if (useBME688 && !isnan(gasResKOhms)) {
     Serial.printf(" gas=%.1fkOhm", gasResKOhms);
   }
+  if (fsrOk) {
+    Serial.printf(" fsr=%d(%s)", fsrRaw, touchDetected ? "TOUCH" : "no");
+  }
+  if (thermOk && !isnan(skinTempC)) {
+    Serial.printf(" skin=%.1fC", skinTempC);
+  }
   Serial.println();
 
   // Nothing at all to post? Skip — don't generate empty requests.
-  if (!bmeOk && !bhOk && !mpuOk && !micOk) {
+  if (!bmeOk && !bhOk && !mpuOk && !micOk && !fsrOk && !thermOk) {
     Serial.println("[sensor] no sensors initialized, skipping post");
     return;
   }
@@ -1121,6 +1188,9 @@ void loop() {
   if (motionState)              { url += "&state=";         url += motionState; }
   if (micOk && !isnan(noiseDb)) { url += "&noise_db=";      url += String(noiseDb, 1); }
   if (noiseEnv)                 { url += "&noise_env=";     url += noiseEnv; }
+  if (fsrOk)                    { url += "&fsr_raw=";        url += fsrRaw;
+                                  url += "&touch_detected="; url += (touchDetected ? "true" : "false"); }
+  if (thermOk && !isnan(skinTempC)) { url += "&skin_temp_c="; url += String(skinTempC, 1); }
 
   // --- Post ---
   HTTPClient http;
