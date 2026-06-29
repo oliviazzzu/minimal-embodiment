@@ -165,7 +165,7 @@ enum FaceExpression {
   FACE_DEFAULT = 0,       // neutral — two dots + straight mouth
   FACE_HAPPY,             // upside-down-U eyes + big smile
   FACE_SHY,               // small ^^ eyes + blush + small smile
-  FACE_LOVE,              // 🥰 — one big heart filling the screen
+  FACE_LOVE,              // ♡ᵔ ᵕ ᵔ♡ — soft arc eyes + smile + outline hearts at cheeks
   FACE_EXCITED,           // 😆 — >< eyes + big D-shaped laughing mouth
   FACE_SLEEPY,            // closed curved eyes (◡ ◡) + tiny mouth dot
   FACE_GOODNIGHT,         // 😴 — sleepy face + Zzz drifting up-right
@@ -563,15 +563,24 @@ float hapticEchoSample() {
 //   - Mouth at y≈48, centered x=64
 //   - Decorations (Zzz, exclamation, etc.) in the corners
 
-// Draw a small ♥ heart centered at (cx, cy). About 9×8 px — two round
-// lobes on top, triangular tip pointing down. Used by FACE_LOVE, where
-// hearts float around the face.
-void drawHeart(int cx, int cy) {
-  oled.fillCircle(cx - 2, cy - 1, 2, SSD1306_WHITE);  // left lobe
-  oled.fillCircle(cx + 2, cy - 1, 2, SSD1306_WHITE);  // right lobe
-  oled.fillTriangle(cx - 3, cy + 1,
-                    cx + 3, cy + 1,
-                    cx,     cy + 4, SSD1306_WHITE);
+// Draw a parametric outline heart ♡ centered at (cx, cy) with given size.
+// Uses the classic parametric equations: x = 16sin³t, y = 13cos−5cos2t−2cos3t−cos4t.
+// Renders as connected line segments — works at any scale on the SSD1306.
+void drawHeartOutline(int cx, int cy, int size) {
+  const int steps = 60;
+  float scale = size * 0.035f;
+  int prevX = -1, prevY = -1;
+  for (int i = 0; i <= steps; i++) {
+    float t = (float)i / steps * 2.0f * PI;
+    float sinT = sin(t);
+    int x = cx + (int)(scale * 16.0f * sinT * sinT * sinT);
+    int y = cy - (int)(scale * (13*cos(t) - 5*cos(2*t) - 2*cos(3*t) - cos(4*t)));
+    if (prevX >= 0) {
+      oled.drawLine(prevX, prevY, x, y, SSD1306_WHITE);
+    }
+    prevX = x;
+    prevY = y;
+  }
 }
 
 void drawFace(FaceExpression face) {
@@ -583,10 +592,10 @@ void drawFace(FaceExpression face) {
 
   switch (face) {
     case FACE_DEFAULT:
-      // Two solid-dot eyes and a short straight mouth. "Here, attentive."
+      // Two solid-dot eyes and a gentle smile. "Here, happy to see you."
       oled.fillCircle(40, 24, 4, SSD1306_WHITE);
       oled.fillCircle(88, 24, 4, SSD1306_WHITE);
-      oled.drawLine(52, 48, 76, 48, SSD1306_WHITE);
+      oled.drawCircleHelper(64, 42, 10, 0xC, SSD1306_WHITE);
       break;
 
     case FACE_HAPPY:
@@ -606,12 +615,15 @@ void drawFace(FaceExpression face) {
       break;
 
     case FACE_LOVE:
-      // 🥰 — one big heart. Lobes are VERY close together (centers only
-      // 12 apart, r=13 each = 14px overlap) so the top reads as one
-      // unified shape with a small dip, not "two balls and a triangle."
-      oled.fillCircle(58, 22, 13, SSD1306_WHITE);                // left lobe
-      oled.fillCircle(70, 22, 13, SSD1306_WHITE);                // right lobe
-      oled.fillTriangle(45, 22, 83, 22, 64, 56, SSD1306_WHITE);  // pointed bottom
+      // ♡ᵔ ᵕ ᵔ♡ — soft arc eyes + gentle smile + outline hearts at cheeks
+      // ᵔ eyes (top arcs, ◠ shape)
+      oled.drawCircleHelper(44, 22, 6, 0x3, SSD1306_WHITE);
+      oled.drawCircleHelper(84, 22, 6, 0x3, SSD1306_WHITE);
+      // ᵕ smile (bottom arc, ◡ shape)
+      oled.drawCircleHelper(64, 40, 7, 0xC, SSD1306_WHITE);
+      // ♡♡ outline hearts at blush position
+      drawHeartOutline(18, 32, 14);
+      drawHeartOutline(110, 32, 14);
       break;
 
     case FACE_EXCITED:
