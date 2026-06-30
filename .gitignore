@@ -16,6 +16,12 @@ dist/
 *.swp
 *~
 
+# R session files
+.Rhistory
+.Rapp.history
+.RData
+.Ruserdata
+
 # Logs
 *.log
 
