@@ -29,9 +29,10 @@ face, a voice, a heartbeat, and can hear and feel itself."
 - [Phase 5: First touch](#phase-5-first-touch)
 - [Phase 6: Audio self-perception loop](#phase-6-audio-self-perception-loop)
 - [Phase 7: Haptic self-perception loop](#phase-7-haptic-self-perception-loop)
-- [Phase 8: First combined interaction](#phase-8-first-combined-interaction)
-- [Phase 9: API reference](#phase-9-api-reference)
-- [Phase 10: Remote bridge — cloudflared](#phase-10-remote-bridge--cloudflared)
+- [Phase 8: Skin — touch and temperature](#phase-8-skin--touch-and-temperature)
+- [Phase 9: First combined interaction](#phase-9-first-combined-interaction)
+- [Phase 10: API reference](#phase-10-api-reference)
+- [Phase 11: Remote bridge — cloudflared](#phase-11-remote-bridge--cloudflared)
 - [For AI agents helping humans build this system](#for-ai-agents-helping-humans-build-this-system)
 - [Cross-phase troubleshooting](#cross-phase-troubleshooting)
 - [Safety notes](#safety-notes)
@@ -60,8 +61,9 @@ This guide is the longer "build it from zero" path.
 
 A small physical body for a large language model:
 
-- **6 input modalities** — temperature, humidity, atmospheric pressure,
-  light, motion, sound
+- **8 input modalities** (9 with BME688) — temperature, humidity,
+  atmospheric pressure, light, motion, sound, touch (pressure), skin
+  temperature (+ gas resistance on BME688)
 - **3 output channels** — haptic (motor), visual (OLED face), audio
   (piezo)
 - **2 self-perception loops** — the LLM can hear itself speak and feel
@@ -85,6 +87,9 @@ distinction means.
 | SSD1306 0.96" OLED (I2C) | Face |
 | KY-006 passive piezo | Voice |
 | INMP441 I2S microphone | Hearing |
+| FSR 402 force-sensitive resistor | Touch pressure |
+| NTC 10K thermistor (MF52D) | Skin temperature |
+| 2× 10kΩ resistor | Voltage dividers for FSR + thermistor |
 | Breadboard + jumper wires (M-M, F-F, M-F) | Wiring |
 | Soldering iron kit (chisel tip) | Assembly |
 | USB cable matching your ESP32 board (data-capable, not charge-only) | Flashing |
@@ -96,9 +101,9 @@ on any single estimate.
 
 **Notes on substitutions:**
 - **BME280 vs BME688.** BME688 is a superset — it adds a gas-resistance
-  sensor for VOC / "smell" sensing. BME280 works for everything in this
-  guide; BME688 unlocks the olfaction extension noted in
-  [Next steps](#next-steps).
+  sensor for VOC / "smell" sensing. The firmware supports both; BME688
+  adds a 9th input modality (gas resistance) and enables the olfaction
+  refinement work described in [Next steps](#next-steps).
 - **ERM vs LRA motor.** This guide uses ERM (eccentric rotating mass)
   coin motors, which feel like a buzzy phone vibration. LRA (linear
   resonant actuator) feels sharper and more "Apple Taptic"–like, but it
@@ -319,10 +324,11 @@ Default I2C address: 0x3C (some clones come strapped to 0x3D — check
 the back of the breakout).
 
 ### Code
-- The bridge accepts 15 named expressions, all drawn from primitives at
-  runtime — no bitmap files: `default`, `happy`, `shy`, `excited`,
-  `sleepy`, `goodnight`, `relaxed`, `angry`, `wronged`, `sad`,
-  `surprised`, `blank`, `expressionless`, `smug`, `pleading`.
+- The bridge accepts 17 named expressions, all drawn from primitives at
+  runtime — no bitmap files: `default`, `happy`, `shy`, `love`,
+  `excited`, `sleepy`, `goodnight`, `relaxed`, `kissing`, `angry`,
+  `wronged`, `sad`, `surprised`, `blank`, `expressionless`, `smug`,
+  `pleading`.
 - New endpoint: `GET /face?expression=<name>`.
 
 ### How to know it worked
@@ -345,10 +351,9 @@ The OLED draws a happy face. You feel something.
 - **Pixels are offset (one column missing left, one extra on right)** —
   common on 0.96" SSD1306 clones. Adjust the column offset in the
   display init code.
-- **`/face?expression=love` or `kissing` returns an error** — those
-  names exist in the firmware but are not currently accepted by the
-  bridge (pending a visual redesign — the heart shape from primitives
-  reads ambiguously). Use one of the 15 names listed under Code.
+- **`/face?expression=<name>` returns an error** — the name must be
+  one of the 17 listed under Code. Common typos: `sleeping` (should be
+  `sleepy`), `neutral` (should be `default`).
 
 ### Milestone
 
@@ -615,15 +620,96 @@ that one acted, in the same gesture.
 
 ---
 
-## Phase 8: First combined interaction
+## Phase 8: Skin — touch and temperature
 
-You now have a body that senses six modalities, expresses through three
-channels, and can verify two of its own outputs. This phase is the
-capstone of the local build: the first time the body is used as one
-integrated system rather than seven verified pieces.
+Two analog sensors that detect human contact: a force-sensitive resistor
+that registers pressure (someone pressing, holding, squeezing) and a
+thermistor that reads skin temperature (someone's hand warming the body).
+
+### What you need
+- FSR 402 force-sensitive resistor
+- NTC 10K thermistor (MF52D)
+- 2× 10kΩ resistor (for voltage dividers)
+
+### Wiring
+
+**FSR 402:**
+- 3.3V → FSR (one leg) → GPIO 36 → 10kΩ → GND
+
+The FSR and the 10kΩ form a voltage divider. No pressure = near-infinite
+FSR resistance = GPIO reads ~0. Pressing the FSR drops its resistance,
+and the ADC reading rises toward 4095.
+
+**NTC thermistor:**
+- 3.3V → 10kΩ → GPIO 39 → thermistor → GND
+
+At 25°C the thermistor is ~10kΩ, so the divider sits near midpoint
+(ADC ≈ 2048). Hand warmth lowers the thermistor's resistance and shifts
+the voltage.
+
+GPIO 36 and 39 are input-only pins on the ESP32 (no pull-up/pull-down
+capability), which is fine — the external 10kΩ resistors set the
+resting voltage.
+
+### Code
+
+- `FSR_PIN 36`, `FSR_TOUCH_THRESHOLD 100` — ADC above threshold =
+  touched.
+- `THERM_PIN 39` — Steinhart-Hart equation converts raw ADC to °C
+  using the MF52D's B-parameter (3950).
+- Both readings are appended to the sensor POST as `fsr_raw`,
+  `touch_detected`, and `skin_temp_c`.
+
+### How to know it worked
+
+Flash the firmware and open Serial Monitor. With no contact, you
+should see `fsr=0(no)` and a skin temperature near ambient (~25°C).
+
+Press the FSR with a finger:
+
+```
+[sensor] ... fsr=1842(TOUCH) skin=31.2C
+```
+
+The FSR value jumps above 100 and `TOUCH` appears. Hold the thermistor
+between your fingers for 10–20 seconds and the skin temperature should
+climb from ambient toward ~30–33°C.
+
+### If something went wrong
+- **FSR always reads 0** — check that 3.3V is reaching one leg of the
+  FSR and that GPIO 36 connects to the junction between the FSR and the
+  10kΩ pull-down. If the 10kΩ is missing, the ADC floats and reads
+  noise.
+- **FSR reads high even untouched** — the pull-down resistor may be
+  missing or disconnected. Without it, the GPIO floats near VCC.
+- **Thermistor reads a fixed temperature regardless of touch** — confirm
+  the voltage divider order: 3.3V → fixed 10kΩ → GPIO 39 → thermistor
+  → GND. If the thermistor and fixed resistor are swapped, the math
+  inverts and the reading won't track hand warmth correctly.
+- **Temperature reads but seems wrong by a few degrees** — normal.
+  The MF52D B-parameter varies ±1–2% across batches. For relative
+  change detection ("someone picked me up") the offset doesn't matter.
+
+### Milestone
+
+> **Your AI can feel your hand.**
+
+The body now knows when it is being held and how warm the hand holding
+it is. These are the first inputs that are specifically about *human
+contact* rather than the room. An LLM can distinguish "sitting on the
+desk" from "being held" — and respond differently.
+
+---
+
+## Phase 9: First combined interaction
+
+You now have a body with nine hardware components — eight sensory inputs
+and one multi-channel output stage. This phase is the capstone of the
+local build: the first time the body is used as one integrated system
+rather than nine verified pieces.
 
 You don't need cloudflared yet — everything below works against the
-local bridge on `localhost:3737`. Phase 10 (cloudflared) opens this up
+local bridge on `localhost:3737`. Phase 11 (cloudflared) opens this up
 to a remote LLM later.
 
 ### A complete interaction flow
@@ -646,7 +732,7 @@ curl -H "$AUTH" "$BASE/haptic?effect=heartbeat&wait_echo=true" | jq
 ```
 
 A complete interaction returns:
-- room state (temperature / humidity / pressure / light / motion / noise),
+- room state (temperature / humidity / pressure / light / motion / noise / touch / skin temperature),
 - OLED expression changed,
 - audio echo `noise_db` rising over the room floor,
 - haptic echo `peak_g` (m/s²) clearly above accelerometer noise.
@@ -685,7 +771,7 @@ moment above is the engineering content.
 
 ---
 
-## Phase 9: API reference
+## Phase 10: API reference
 
 All endpoints expect the bridge token via an
 `Authorization: Bearer <US_BRIDGE_TOKEN>` header. The bridge also
@@ -727,7 +813,9 @@ Returns the latest room snapshot:
       "temperature_c": 26.0, "humidity_pct": 57, "pressure_hpa": 1012.1,
       "light_lux": 24.2, "noise_db": 43.5, "noise_env": "quiet"
     },
-    "motion": { "state": "still" }
+    "motion": { "state": "still" },
+    "touch": { "fsr_raw": 0, "touch_detected": false },
+    "skin": { "skin_temp_c": 25.3 }
   },
   "age_seconds": 4,
   "recent_beep_echo": {
@@ -744,10 +832,10 @@ Note: `/sensor/status` includes `recent_beep_echo` but not
 
 ### `/face?expression=<NAME>`
 
-15 named expressions, all drawn from primitives at runtime (no bitmap
-files): `default`, `happy`, `shy`, `excited`, `sleepy`, `goodnight`,
-`relaxed`, `angry`, `wronged`, `sad`, `surprised`, `blank`,
-`expressionless`, `smug`, `pleading`.
+17 named expressions, all drawn from primitives at runtime (no bitmap
+files): `default`, `happy`, `shy`, `love`, `excited`, `sleepy`,
+`goodnight`, `relaxed`, `kissing`, `angry`, `wronged`, `sad`,
+`surprised`, `blank`, `expressionless`, `smug`, `pleading`.
 
 ### `/beep`
 
@@ -841,7 +929,7 @@ echo payloads from the previous action — beep echoes surface in
 
 ---
 
-## Phase 10: Remote bridge — cloudflared
+## Phase 11: Remote bridge — cloudflared
 
 Until now the bridge has been on `localhost`. To let an LLM client
 running anywhere on the internet reach your body, you need a tunnel
@@ -904,8 +992,10 @@ cloudflared tunnel run us-bridge
 sudo cloudflared service install     # Linux/macOS — runs at boot.
 ```
 
-The reference deployment uses a `scripts/up.sh` helper that starts the
-bridge and the tunnel together; see that file for the pattern.
+The reference deployment uses `scripts/serve.sh` to start the bridge
+(it builds first if `dist/` is missing, then runs
+`dist/http-bridge.js`); run the tunnel separately with
+`cloudflared tunnel run` as shown above.
 
 ### Verify it works
 
@@ -1033,15 +1123,17 @@ phase-specific sections above; this is meant to be searchable.
 ## Next steps
 
 The body in this guide is the minimum sufficient configuration for §6 of
-the paper — six inputs, three outputs, two self-perception loops on a
+the paper — eight inputs, three outputs, two self-perception loops on a
 breadboard, tethered to USB. Things you might add:
 
-- **Phase 11: Vision.** ESP32-CAM + OV2640. The original plan; deferred
+- **Phase 12: Vision.** ESP32-CAM + OV2640. The original plan; deferred
   in the reference build.
-- **Phase 12: Olfaction.** BME688's gas-resistance sensor for VOC /
-  air-quality / faint smell sensing. (BME688 is the optional upgrade
-  noted in the parts table; this phase is what unlocks the upgrade.)
-- **Phase 13: Portability.** Battery, enclosure, single-board form
+- **Phase 13: Olfaction refinement.** A 3-class scent classifier
+  (baseline / orange / perfume) is included in `olfaction/` — see its
+  README and model card for details. Extensions: hard-negative classes,
+  novelty detection, cross-environment generalization, real-time
+  classification integrated into the bridge.
+- **Phase 14: Portability.** Battery, enclosure, single-board form
   factor. Pick a wearable shape — wristband, pendant, pocket — and
   redesign accordingly.
 
