@@ -501,11 +501,15 @@ type PendingCommand =
   | { type: "haptic"; effect_id: number; echo?: number }
   | { type: "haptic_baseline" }
   | { type: "face"; expression: string }
-  | { type: "beep"; frequency: number; duration_ms: number };
+  | { type: "beep"; frequency: number; duration_ms: number }
+  // A whole song in ONE command. `notes` is CSV "freqXdurXgap,..." — the
+  // firmware plays the sequence locally with its own delays, so note
+  // spacing never depends on poll round-trip time. freq 0 = rest.
+  | { type: "melody"; notes: string };
 
 const commandQueue: PendingCommand[] = [];
-// Sized to hold a single full /melody burst (MAX_MELODY_NOTES notes);
-// see the melody section below for the rationale.
+// A melody travels as a single command, so the queue only needs room
+// for a burst of discrete commands; 64 is generous headroom.
 const MAX_COMMAND_QUEUE = 64;
 
 type CommandResolver = (cmd: PendingCommand | null) => void;
@@ -1038,27 +1042,36 @@ async function handleBeep(args: unknown): Promise<{
   };
 }
 
-// ---- melody (multi-note beep batch) --------------------------------------
+// ---- melody (whole song as one command) ----------------------------------
 //
-// Single GET → N beep commands queued at once. The device drains the queue
-// at its ~500 ms poll cadence and plays the melody over a few seconds.
-// Necessary for LLM clients with high per-fetch latency, where N sequential
-// single-note /beep calls would land with multi-second gaps between notes —
-// not music.
+// Single GET → ONE melody command queued. The device receives the entire
+// score and plays it locally: tone duration AND the silence after each note
+// are both firmware-side delays, so the tempo belongs to the device, not
+// the network. (Queueing N beep commands and letting the poll cadence set
+// the tempo breaks down as soon as poll round-trips slow — over a TLS
+// tunnel each note waits a full reconnect, and a song shreds into stutter.)
 //
 // Two ways to call:
 //   ?song=<name>   — server-side library lookup (short URL; works for
 //                    clients whose web_fetch may reject very long URLs)
-//   ?notes=<csv>   — inline CSV: freqXduration,freqXduration,...
-// Note tempo is set by the device's poll cadence, not by duration_ms —
-// duration_ms only controls how long each tone sounds within its slot.
+//   ?notes=<csv>   — inline CSV: freqXdur or freqXdurXgap per token
+//   &gap_ms=<n>    — default silence after each note when a token doesn't
+//                    carry its own Xgap (default DEFAULT_NOTE_GAP_MS).
+//                    freq 0 = rest.
+//
+// The gap is a first-class musical parameter: without it a whole-song
+// command plays legato and melodies blur together.
 
-// Upper bound on notes per /melody call. Aligned with MAX_COMMAND_QUEUE so a
-// single melody can in principle fill the queue but not exceed it; the
-// largest shipped SONGS preset (twinkle_full, 42 notes) fits comfortably.
+// Upper bound on notes per /melody call; the largest shipped SONGS preset
+// (twinkle_full, 42 notes) fits comfortably.
 const MAX_MELODY_NOTES = 64;
+// Default silence after each note when the caller doesn't specify one.
+// Deliberately unhurried — piezo tones need far more breathing room than
+// musical intuition suggests; 520ms is the ear-calibrated value. Fast
+// passages should say so explicitly (per-note Xgap or a small gap_ms).
+const DEFAULT_NOTE_GAP_MS = 520;
 
-type Note = { frequency: number; duration_ms: number };
+type Note = { frequency: number; duration_ms: number; gap_ms?: number };
 
 const SONGS: Record<string, Note[]> = (() => {
   // Twinkle, twinkle, little star — each phrase is 7 notes (6 quarters + 1 half).
@@ -1066,10 +1079,13 @@ const SONGS: Record<string, Note[]> = (() => {
   const Q = 280; // quarter-note tone duration
   const H = 500; // phrase-ending half-note tone duration
   const FIN = 800; // final-note tone duration (lets it ring)
+  const QGAP = 360; // silence after a quarter note — a rocking lullaby pace
+  const PHRASE_GAP = 680; // breath after a phrase-ending half note
   const phrase = (pitches: number[], lastDur: number): Note[] =>
     pitches.map((f, i) => ({
       frequency: f,
       duration_ms: i === pitches.length - 1 ? lastDur : Q,
+      gap_ms: i === pitches.length - 1 ? PHRASE_GAP : QGAP,
     }));
   const p1 = phrase([262, 262, 392, 392, 440, 440, 392], H); // twinkle, twinkle, little star
   const p2 = phrase([349, 349, 330, 330, 294, 294, 262], H); // how I wonder what you are
@@ -1089,8 +1105,17 @@ function handleMelody(args: unknown): {
   count: number;
   song: string | null;
   notes: Note[];
+  total_ms: number;
 } {
   const songRaw = asOptionalString(getField(args, "song"));
+  const gapRaw = getField(args, "gap_ms");
+  const defaultGap =
+    gapRaw === undefined || gapRaw === null || gapRaw === ""
+      ? DEFAULT_NOTE_GAP_MS
+      : Number(gapRaw);
+  if (!Number.isFinite(defaultGap) || defaultGap < 0 || defaultGap > 3000) {
+    throw new Error(`gap_ms out of range (0-3000): ${String(gapRaw)}`);
+  }
   let parsed: Note[];
   let songName: string | null = null;
 
@@ -1104,7 +1129,7 @@ function handleMelody(args: unknown): {
     const notesRaw = getField(args, "notes");
     if (typeof notesRaw !== "string" || notesRaw.length === 0) {
       throw new Error(
-        `missing \`song\` (one of: ${SONG_NAMES.join(", ")}) or \`notes\` (CSV: freqXduration,...)`,
+        `missing \`song\` (one of: ${SONG_NAMES.join(", ")}) or \`notes\` (CSV: freqXdur or freqXdurXgap,...)`,
       );
     }
     const tokens = notesRaw.split(",").map((s) => s.trim()).filter(Boolean);
@@ -1116,32 +1141,50 @@ function handleMelody(args: unknown): {
     }
     parsed = [];
     for (const tok of tokens) {
-      const m = /^(\d+)[xX](\d+)$/.exec(tok);
+      const m = /^(\d+)[xX](\d+)(?:[xX](\d+))?$/.exec(tok);
       if (!m) {
         throw new Error(
-          `bad note "${tok}" — expected freqXduration (e.g. 262x300)`,
+          `bad note "${tok}" — expected freqXdur or freqXdurXgap (e.g. 262x300 or 262x300x150)`,
         );
       }
       const frequency = parseInt(m[1], 10);
       const duration_ms = parseInt(m[2], 10);
-      if (frequency < 100 || frequency > 10000) {
-        throw new Error(`frequency out of range (100-10000 Hz): ${frequency}`);
+      const gap_ms = m[3] !== undefined ? parseInt(m[3], 10) : undefined;
+      // frequency 0 is a rest — silence for duration_ms.
+      if (frequency !== 0 && (frequency < 100 || frequency > 10000)) {
+        throw new Error(
+          `frequency out of range (0 for rest, or 100-10000 Hz): ${frequency}`,
+        );
       }
       if (duration_ms < 1 || duration_ms > 5000) {
         throw new Error(`duration_ms out of range (1-5000): ${duration_ms}`);
       }
-      parsed.push({ frequency, duration_ms });
+      if (gap_ms !== undefined && gap_ms > 3000) {
+        throw new Error(`per-note gap out of range (0-3000): ${gap_ms}`);
+      }
+      parsed.push(
+        gap_ms === undefined
+          ? { frequency, duration_ms }
+          : { frequency, duration_ms, gap_ms },
+      );
     }
   }
 
-  for (const note of parsed) {
-    queueCommand({
-      type: "beep",
-      frequency: note.frequency,
-      duration_ms: note.duration_ms,
-    });
-  }
-  return { count: parsed.length, song: songName, notes: parsed };
+  // ONE command carries the whole score; the firmware owns the tempo from
+  // here. Gaps are baked into every token so the firmware never needs a
+  // default of its own.
+  const csv = parsed
+    .map(
+      (n) => `${n.frequency}x${n.duration_ms}x${n.gap_ms ?? defaultGap}`,
+    )
+    .join(",");
+  queueCommand({ type: "melody", notes: csv });
+
+  const total_ms = parsed.reduce(
+    (sum, n) => sum + n.duration_ms + (n.gap_ms ?? defaultGap),
+    0,
+  );
+  return { count: parsed.length, song: songName, notes: parsed, total_ms };
 }
 
 // "true" / "1" / "yes" → true; everything else → false. Same coercion the
