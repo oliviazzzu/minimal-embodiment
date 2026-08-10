@@ -1130,8 +1130,23 @@ void commandPollTask(void* param) {
   (void)param;
   Serial.println("[cmd-poll] task started");
 
+  // ONE HTTPClient for the life of the task, TLS session reused across
+  // polls. Building a fresh client per round costs a full mbedTLS
+  // handshake — over a second on this class of hardware — in front of
+  // every command; with reuse the round-trip is a few hundred
+  // milliseconds. setReuse keeps the socket; setURL swaps the query
+  // (echo piggyback params differ per request) without dropping the
+  // connection. Any transport error tears the session down and the next
+  // round rebuilds from scratch — worst case is a fresh handshake per
+  // round.
+  HTTPClient http;
+  http.setTimeout(30000);  // slightly > server's wait so we don't abort early
+  http.setReuse(true);
+  bool sessionUp = false;
+
   for (;;) {
     if (WiFi.status() != WL_CONNECTED) {
+      if (sessionUp) { http.end(); sessionUp = false; }
       vTaskDelay(pdMS_TO_TICKS(2000));
       continue;
     }
@@ -1161,9 +1176,21 @@ void commandPollTask(void* param) {
       lastHapticEcho.valid = false;
     }
 
-    HTTPClient http;
-    http.setTimeout(30000);  // slightly > server's wait so we don't abort early
-    http.begin(url);
+    bool ready;
+    if (!sessionUp) {
+      ready = http.begin(url);
+      sessionUp = ready;
+    } else {
+      // Same host every time, so this reuses the live TLS connection and
+      // only rewrites the path+query.
+      ready = http.setURL(url);
+      if (!ready) { http.end(); sessionUp = false; }
+    }
+    if (!ready) {
+      Serial.println("[cmd-poll] begin/setURL failed, backing off");
+      vTaskDelay(pdMS_TO_TICKS(3000));
+      continue;
+    }
     int code = http.GET();
 
     if (code == 200) {
@@ -1250,17 +1277,21 @@ void commandPollTask(void* param) {
         Serial.printf("[cmd] unknown type \"%s\"\n", type.c_str());
       }
     } else if (code == 204) {
-      // Long-poll timeout, no command pending. Normal, just re-poll.
+      // Long-poll timeout, no command pending. Normal, just re-poll —
+      // the session stays up.
     } else {
-      Serial.printf("[cmd-poll] HTTP %d (%s), backing off\n",
+      // Transport error or unexpected status: drop the session so the
+      // next round does a clean rebuild (handshake and all).
+      Serial.printf("[cmd-poll] HTTP %d (%s), rebuilding session\n",
                     code, http.errorToString(code).c_str());
       http.end();
+      sessionUp = false;
       vTaskDelay(pdMS_TO_TICKS(3000));
       continue;
     }
-    http.end();
     // Small yield between polls to avoid a 100% busy loop if the server
-    // ever returns instantly on every request.
+    // ever returns instantly on every request. NOTE: no http.end() here —
+    // keeping the connection open across rounds is the whole point.
     vTaskDelay(pdMS_TO_TICKS(50));
   }
 }
