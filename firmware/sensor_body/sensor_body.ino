@@ -971,6 +971,7 @@ int parseFaceExpression(const char* name) {
 //   {"type":"haptic","effect_id":N}
 //   {"type":"face","expression":"happy"}
 //   {"type":"beep","frequency":N,"duration_ms":M}
+//   {"type":"melody","notes":"freqXdurXgap,..."}  — whole song, one command
 //   204 (empty body) on timeout — re-poll
 
 void beepAt(int frequency, int durationMs) {
@@ -1024,6 +1025,75 @@ float beepAtAndListen(int frequency, int durationMs) {
   // After the tone ends, the DMA queue holds the last ~64 ms of the beep.
   // Read it and compute dB SPL.
   return micOk ? readMicNoiseDb() : NAN;
+}
+
+// Melody playback — the whole score arrives in ONE poll command and the
+// device keeps its own time. Playing a song as N discrete beep commands
+// puts a full poll round-trip between every two notes; over a TLS tunnel
+// that is a reconnect per note, and the song shreds into stutter.
+//
+// CSV format: "freqXdurXgap,..." — gap is the silence AFTER the note (the
+// bridge bakes a value into every token). freq 0 = rest for dur ms.
+// The last sounding note goes through beepAtAndListen so a finished song
+// still reports one echo: the device hears itself sing the ending.
+static const int MAX_MELODY_TOKENS = 64;
+
+void playMelody(const String& csv) {
+  // Pass 1: index of the last sounding (freq > 0) token — that note
+  // carries the echo measurement. String::toInt parses leading digits, so
+  // "349x280x200".toInt() is the frequency.
+  int lastSounding = -1;
+  int count = 0;
+  int pos = 0;
+  while (pos < (int)csv.length() && count < MAX_MELODY_TOKENS) {
+    int comma = csv.indexOf(',', pos);
+    if (comma < 0) comma = csv.length();
+    if (csv.substring(pos, comma).toInt() > 0) lastSounding = count;
+    count++;
+    pos = comma + 1;
+  }
+
+  // Pass 2: play. All timing is local vTaskDelay — zero network between
+  // notes. The poll task is busy singing for the duration; queued
+  // commands simply wait at the bridge in FIFO order.
+  pos = 0;
+  int idx = 0;
+  while (pos < (int)csv.length() && idx < MAX_MELODY_TOKENS) {
+    int comma = csv.indexOf(',', pos);
+    if (comma < 0) comma = csv.length();
+    String tok = csv.substring(pos, comma);
+    pos = comma + 1;
+
+    int x1 = tok.indexOf('x');
+    int x2 = (x1 >= 0) ? tok.indexOf('x', x1 + 1) : -1;
+    if (x1 <= 0) { idx++; continue; }  // malformed token — skip it
+    int freq = tok.substring(0, x1).toInt();
+    int dur  = (x2 > x1) ? tok.substring(x1 + 1, x2).toInt()
+                         : tok.substring(x1 + 1).toInt();
+    int gap  = (x2 > x1) ? tok.substring(x2 + 1).toInt() : 0;
+    if (dur < 1) dur = 1;
+    if (dur > 5000) dur = 5000;
+    if (gap < 0) gap = 0;
+    if (gap > 3000) gap = 3000;
+
+    if (freq == 0) {
+      vTaskDelay(pdMS_TO_TICKS(dur));  // rest — silence is a note too
+    } else if (idx == lastSounding) {
+      float echoDb = beepAtAndListen(freq, dur);
+      if (!isnan(echoDb)) {
+        lastEcho.frequency   = freq;
+        lastEcho.duration_ms = dur;
+        lastEcho.noise_db    = echoDb;
+        lastEcho.valid       = true;
+        Serial.printf("[cmd] melody echo: mic heard %.1f dB on the last note\n",
+                      echoDb);
+      }
+    } else {
+      beepAt(freq, dur);
+    }
+    if (gap > 0) vTaskDelay(pdMS_TO_TICKS(gap));
+    idx++;
+  }
 }
 
 // Extract a quoted string value for a JSON key name from a flat body.
@@ -1168,6 +1238,13 @@ void commandPollTask(void* param) {
             lastEcho.valid       = true;
             Serial.printf("[cmd] beep echo: mic heard %.1f dB during the tone\n", echoDb);
           }
+        }
+      } else if (type == "melody") {
+        String notes = extractJsonString(body, "notes");
+        if (notes.length() > 0) {
+          Serial.printf("[cmd] melody: %d bytes of score\n", notes.length());
+          playMelody(notes);
+          Serial.println("[cmd] melody done");
         }
       } else {
         Serial.printf("[cmd] unknown type \"%s\"\n", type.c_str());
