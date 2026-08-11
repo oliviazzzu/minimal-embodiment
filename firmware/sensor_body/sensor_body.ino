@@ -1157,15 +1157,18 @@ void commandPollTask(void* param) {
     url += BRIDGE_TOKEN;
     url += "&wait=25";
     // Piggyback any pending beep-echo onto this request, so the bridge
-    // learns what the mic heard during the most recent beep. We send it
-    // on the very next poll after the beep, then clear the slot.
-    if (lastEcho.valid) {
+    // learns what the mic heard during the most recent beep. The slot is
+    // cleared only once delivery is confirmed (2xx below) — on a transport
+    // failure the echo stays queued and rides the next round instead of
+    // being silently dropped.
+    bool carryingBeepEcho = lastEcho.valid;
+    if (carryingBeepEcho) {
       url += "&echo_freq=";        url += lastEcho.frequency;
       url += "&echo_duration_ms="; url += lastEcho.duration_ms;
       url += "&echo_noise_db=";    url += String(lastEcho.noise_db, 1);
-      lastEcho.valid = false;
     }
-    if (lastHapticEcho.valid) {
+    bool carryingHapticEcho = lastHapticEcho.valid;
+    if (carryingHapticEcho) {
       url += "&hecho_effect=";     url += lastHapticEcho.effect_id;
       url += "&hecho_peak=";       url += String(lastHapticEcho.peak_g, 3);
       // Extended echo statistics — the bridge computes snr + felt from
@@ -1173,7 +1176,6 @@ void commandPollTask(void* param) {
       url += "&hecho_rms=";        url += String(lastHapticEcho.rms, 3);
       url += "&hecho_floor_peak="; url += String(lastHapticEcho.floor_peak, 3);
       url += "&hecho_floor_rms=";  url += String(lastHapticEcho.floor_rms, 3);
-      lastHapticEcho.valid = false;
     }
 
     bool ready;
@@ -1192,6 +1194,14 @@ void commandPollTask(void* param) {
       continue;
     }
     int code = http.GET();
+
+    // Any 2xx means the bridge parsed the query string — piggybacked
+    // echoes are ingested at request arrival, so only now is it safe to
+    // clear them.
+    if (code == 200 || code == 204) {
+      if (carryingBeepEcho)   lastEcho.valid = false;
+      if (carryingHapticEcho) lastHapticEcho.valid = false;
+    }
 
     if (code == 200) {
       String body = http.getString();
@@ -1284,6 +1294,9 @@ void commandPollTask(void* param) {
       // next round does a clean rebuild (handshake and all).
       Serial.printf("[cmd-poll] HTTP %d (%s), rebuilding session\n",
                     code, http.errorToString(code).c_str());
+      if (carryingBeepEcho || carryingHapticEcho) {
+        Serial.println("[cmd-poll] echo delivery unconfirmed — will retry next round");
+      }
       http.end();
       sessionUp = false;
       vTaskDelay(pdMS_TO_TICKS(3000));
