@@ -94,6 +94,7 @@
 #include <Adafruit_SSD1306.h>
 #include <driver/i2s_std.h>
 #include <math.h>
+#include "lwip/dns.h"   // dns_setserver — DNS fallback slot
 
 // ---- CONFIGURATION (fill these in before flashing) -----------------------
 
@@ -257,6 +258,26 @@ i2s_chan_handle_t i2sRxChan = NULL;
 
 unsigned long lastPostMs  = 0;
 unsigned long postCounter = 0;  // monotonic counter for path nonces
+
+// DNS fallback. Some routers' DNS resolver stops answering while the WiFi
+// link itself stays up — every bridge-host lookup then fails until the
+// router is rebooted. lwIP keeps DNS_MAX_SERVERS=3 server slots: DHCP
+// fills slot 0 (and sometimes 1) with the router, and current cores leave
+// slot 2 alone — so we park a public resolver there. When a lookup times
+// out, lwIP walks the slots and lands on the fallback; the first
+// successful answer refills the DNS cache, so recovery needs no reboot on
+// either side. Installed after the first connect and re-installed after
+// every reconnect — whether a DHCP renewal preserves the slot depends on
+// the network stack version, so re-arming is the cheap safe default. (On
+// networks that block public resolvers the fallback simply never answers
+// — behavior degrades to exactly what it was without one.)
+static void installDnsFallback() {
+  ip_addr_t fallback;
+  IP_ADDR4(&fallback, 8, 8, 8, 8);
+  dns_setserver(2, &fallback);   // slot 2 — reserved here as fallback on
+                                 // the tested Arduino-ESP32 core
+  Serial.println("[wifi] dns fallback 8.8.8.8 armed (slot 2)");
+}
 
 // ---- SETUP ---------------------------------------------------------------
 
@@ -452,6 +473,7 @@ void setup() {
   if (WiFi.status() == WL_CONNECTED) {
     Serial.print("\n[wifi] connected, IP=");
     Serial.println(WiFi.localIP());
+    installDnsFallback();
   }
 
   // --- Start unified command long-poll task ---
@@ -1359,12 +1381,18 @@ void loop() {
     echoRequest = false;
   }
 
-  // Reconnect WiFi if dropped
+  // Reconnect WiFi if dropped; re-arm the DNS fallback once it recovers.
+  static bool wifiWasDown = false;
   if (WiFi.status() != WL_CONNECTED) {
+    wifiWasDown = true;
     Serial.println("[wifi] reconnecting...");
     WiFi.reconnect();
     delay(2000);
     return;
+  }
+  if (wifiWasDown) {
+    wifiWasDown = false;
+    installDnsFallback();
   }
 
   // Wait until the next scheduled post
