@@ -214,6 +214,43 @@ bool thermOk = false;
 // (instantaneous read) does not. No new task, no extra TLS session.
 int fsrPeakSinceLast = 0;
 
+// Touch event: the same 200ms ticks segment FSR readings into discrete
+// touches (press → release). The most recent completed touch is shipped on
+// the next sensor post as &touch_event=<ms_since_ended>~<duration_ms>~<peak>
+// — single slot, latest wins, same ferry as the beep/haptic echoes. At 5 Hz
+// sampling a touch shorter than ~200ms may be missed; a touch still in
+// progress at post time is reported on release instead.
+struct TouchEvent {
+  bool  valid;
+  unsigned long end_ms;   // millis() at release
+  unsigned long dur_ms;   // press → release
+  int   peak;             // max ADC value during the touch
+};
+TouchEvent lastTouchEvent = { false, 0, 0, 0 };
+bool touchActive = false;
+unsigned long touchStartMs = 0;
+int touchEventPeak = 0;
+
+void trackTouchSample(int v, unsigned long nowMs) {
+  if (v > fsrPeakSinceLast) fsrPeakSinceLast = v;
+  if (!touchActive) {
+    if (v > FSR_TOUCH_THRESHOLD) {
+      touchActive = true;
+      touchStartMs = nowMs;
+      touchEventPeak = v;
+    }
+  } else {
+    if (v > touchEventPeak) touchEventPeak = v;
+    if (v <= FSR_TOUCH_THRESHOLD) {
+      lastTouchEvent.end_ms = nowMs;
+      lastTouchEvent.dur_ms = nowMs - touchStartMs;
+      lastTouchEvent.peak   = touchEventPeak;
+      lastTouchEvent.valid  = true;
+      touchActive = false;
+    }
+  }
+}
+
 // Handle for the I2S RX channel (INMP441). Held globally so
 // readMicNoiseDb() can pull samples from anywhere; opened once in setup.
 i2s_chan_handle_t i2sRxChan = NULL;
@@ -1334,8 +1371,7 @@ void loop() {
   unsigned long now = millis();
   if (now - lastPostMs < POST_INTERVAL_MS) {
     if (fsrOk) {
-      int v = analogRead(FSR_PIN);
-      if (v > fsrPeakSinceLast) fsrPeakSinceLast = v;
+      trackTouchSample(analogRead(FSR_PIN), now);
     }
     delay(200);
     return;
@@ -1383,8 +1419,8 @@ void loop() {
   int fsrRaw = 0;
   bool touchDetected = false;
   if (fsrOk) {
-    int instant = analogRead(FSR_PIN);
-    fsrRaw = max(instant, fsrPeakSinceLast);  // peak within this 10s window
+    trackTouchSample(analogRead(FSR_PIN), millis());  // one last sample pre-post
+    fsrRaw = fsrPeakSinceLast;                // peak within this 10s window
     touchDetected = (fsrRaw > FSR_TOUCH_THRESHOLD);
     fsrPeakSinceLast = 0;                     // reset for next window
   }
@@ -1454,6 +1490,18 @@ void loop() {
   if (noiseEnv)                 { url += "&noise_env=";     url += noiseEnv; }
   if (fsrOk)                    { url += "&fsr_raw=";        url += fsrRaw;
                                   url += "&touch_detected="; url += (touchDetected ? "true" : "false"); }
+  bool carryingTouchEvent = false;
+  if (fsrOk && lastTouchEvent.valid) {
+    // Cleared only after the bridge confirms receipt (2xx below); a failed
+    // post re-sends next window, and the age is recomputed at send time.
+    carryingTouchEvent = true;
+    url += "&touch_event=";
+    url += (millis() - lastTouchEvent.end_ms);
+    url += "~";
+    url += lastTouchEvent.dur_ms;
+    url += "~";
+    url += lastTouchEvent.peak;
+  }
   if (thermOk && !isnan(skinTempC)) { url += "&skin_temp_c="; url += String(skinTempC, 1); }
 
   // --- Post ---
@@ -1468,4 +1516,14 @@ void loop() {
     Serial.printf("[post] ERROR: %s\n", http.errorToString(code).c_str());
   }
   http.end();
+
+  // Any 2xx means the bridge parsed the query string — only then is the
+  // slot cleared. On failure it stays and rides the next post.
+  if (carryingTouchEvent) {
+    if (code >= 200 && code < 300) {
+      lastTouchEvent.valid = false;
+    } else {
+      Serial.println("[post] touch delivery unconfirmed — will resend next post");
+    }
+  }
 }

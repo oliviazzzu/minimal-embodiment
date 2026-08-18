@@ -86,9 +86,54 @@ type SensorReading = {
     heart_rate_bpm?: number;
     source?: string;
   };
+  touch?: {
+    fsr_raw?: number;     // FSR 402 peak ADC value within the post window
+    detected?: boolean;   // fsr_raw above the firmware touch threshold
+    skin_temp_c?: number; // NTC thermistor skin-contact temperature
+  };
 };
 
 let latestSensorReading: SensorReading | null = null;
+
+// ---------------------------------------------------------------------------
+// Most recent touch. The firmware ships its latest completed touch on the
+// next sensor post as &touch_event=<ms_since_ended>~<duration_ms>~<peak> —
+// single slot, latest wins, same shape as the beep/haptic echoes. Served in
+// /sensor/status and room snapshots as `recent_touch`; gone on restart.
+// ---------------------------------------------------------------------------
+
+type TouchEvent = {
+  timestamp: string;    // estimated release moment (reconstructed on arrival)
+  duration_ms: number;
+  peak: number;         // max FSR ADC value (0-4095) during the touch
+};
+
+let lastTouch: TouchEvent | null = null;
+
+function recordTouchEvent(tok: string): void {
+  const m = /^(\d+)~(\d+)~(\d+)$/.exec(tok.trim());
+  if (!m) return;
+  lastTouch = {
+    timestamp: new Date(Date.now() - parseInt(m[1], 10)).toISOString(),
+    duration_ms: parseInt(m[2], 10),
+    peak: parseInt(m[3], 10),
+  };
+}
+
+function recentTouch(): {
+  duration_ms: number;
+  peak: number;
+  age_seconds: number;
+} | null {
+  if (!lastTouch) return null;
+  return {
+    duration_ms: lastTouch.duration_ms,
+    peak: lastTouch.peak,
+    age_seconds: Math.round(
+      (Date.now() - new Date(lastTouch.timestamp).getTime()) / 1000,
+    ),
+  };
+}
 
 // Default 3737. Override with PORT=xxxx if needed.
 const PORT = Number(process.env.PORT ?? 3737);
@@ -361,6 +406,23 @@ function buildReading(args: unknown): SensorReading {
   if (Object.values(biometric).some((v) => v !== undefined)) {
     reading.biometric = biometric;
   }
+
+  const fsrRaw = asOptionalNumber(a["fsr_raw"]);
+  const skinTempC = asOptionalNumber(a["skin_temp_c"]);
+  const touchDetectedRaw = a["touch_detected"];
+  const touchDetected =
+    touchDetectedRaw === true || touchDetectedRaw === "true"
+      ? true
+      : touchDetectedRaw === false || touchDetectedRaw === "false"
+        ? false
+        : undefined;
+  if (fsrRaw !== undefined || touchDetected !== undefined || skinTempC !== undefined) {
+    reading.touch = {
+      ...(fsrRaw !== undefined && { fsr_raw: fsrRaw }),
+      ...(touchDetected !== undefined && { detected: touchDetected }),
+      ...(skinTempC !== undefined && { skin_temp_c: skinTempC }),
+    };
+  }
   return reading;
 }
 
@@ -370,6 +432,8 @@ function handleSensorUpdate(args: unknown): {
 } {
   const reading = buildReading(args);
   latestSensorReading = reading;
+  const touchEventTok = asOptionalString(getField(args, "touch_event"));
+  if (touchEventTok) recordTouchEvent(touchEventTok);
   return { stored: true, reading };
 }
 
@@ -378,6 +442,7 @@ function handleSensorStatus(): {
   reading: SensorReading | null;
   age_seconds: number | null;
   recent_beep_echo: (BeepEcho & { age_seconds: number }) | null;
+  recent_touch: ReturnType<typeof recentTouch>;
   instance: string;
 } {
   // Bundle the most recent beep echo too — same idea as currentRoom():
@@ -398,6 +463,7 @@ function handleSensorStatus(): {
       reading: null,
       age_seconds: null,
       recent_beep_echo: echo,
+      recent_touch: recentTouch(),
       instance: `${INSTANCE_ID}@${BOOT_TIME}`,
     };
   }
@@ -407,6 +473,7 @@ function handleSensorStatus(): {
     reading: latestSensorReading,
     age_seconds: Math.round(age),
     recent_beep_echo: echo,
+    recent_touch: recentTouch(),
     instance: `${INSTANCE_ID}@${BOOT_TIME}`,
   };
 }
@@ -445,6 +512,9 @@ function currentRoom(): object | null {
     if (r.motion?.state)               room.motion          = r.motion.state;
     if (r.motion?.step_count != null)  room.step_count      = r.motion.step_count;
     if (r.biometric?.heart_rate_bpm != null) room.heart_rate_bpm = r.biometric.heart_rate_bpm;
+    if (r.touch?.fsr_raw != null)      room.fsr_raw        = r.touch.fsr_raw;
+    if (r.touch?.detected != null)     room.touch_detected = r.touch.detected;
+    if (r.touch?.skin_temp_c != null)  room.skin_temp_c    = r.touch.skin_temp_c;
     room.age_seconds = Math.round((Date.now() - new Date(r.timestamp).getTime()) / 1000);
   }
   if (e) {
@@ -474,6 +544,8 @@ function currentRoom(): object | null {
       age_seconds: Math.round((Date.now() - new Date(h.timestamp).getTime()) / 1000),
     };
   }
+  const t = recentTouch();
+  if (t) room.recent_touch = t;
   return room;
 }
 

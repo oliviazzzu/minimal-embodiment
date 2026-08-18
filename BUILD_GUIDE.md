@@ -700,6 +700,9 @@ resting voltage.
   using the MF52D's B-parameter (3950).
 - Both readings are appended to the sensor POST as `fsr_raw`,
   `touch_detected`, and `skin_temp_c`.
+- Touches are segmented into discrete events (press → release), each with
+  duration and peak pressure. The most recent one appears as
+  `recent_touch` in `/sensor/status` and room snapshots.
 
 ### How to know it worked
 
@@ -714,7 +717,7 @@ Press the FSR with a finger:
 
 The FSR value jumps above 100 and `TOUCH` appears. Hold the thermistor
 between your fingers for 10–20 seconds and the skin temperature should
-climb from ambient toward ~30–33°C.
+climb from ambient toward ~36–39°C.
 
 ### If something went wrong
 - **FSR always reads 0** — check that 3.3V is reaching one leg of the
@@ -850,26 +853,29 @@ Returns the latest room snapshot:
 {
   "has_reading": true,
   "reading": {
+    "timestamp": "…",
     "environment": {
       "temperature_c": 26.0, "humidity_pct": 57, "pressure_hpa": 1012.1,
       "light_lux": 24.2, "noise_db": 43.5, "noise_env": "quiet"
     },
     "motion": { "state": "still" },
-    "touch": { "fsr_raw": 0, "touch_detected": false },
-    "skin": { "skin_temp_c": 25.3 }
+    "touch": { "fsr_raw": 0, "detected": false, "skin_temp_c": 25.3 }
   },
   "age_seconds": 4,
   "recent_beep_echo": {
+    "timestamp": "…",
     "frequency": 523, "duration_ms": 400,
     "noise_db": 67.3, "noise_env": "noisy", "age_seconds": 2
+  },
+  "recent_touch": {
+    "duration_ms": 800, "peak": 1842, "age_seconds": 3
   }
 }
 ```
 
-Note: `/sensor/status` includes `recent_beep_echo` but not
-`recent_haptic_echo`. To read the latest haptic echo, use
-`/haptic/echo` directly, or read the `room` object returned by
-`/haptic`, `/beep`, and `/face` responses.
+Note: `/sensor/status` includes `recent_beep_echo` and `recent_touch`
+but not `recent_haptic_echo` — read that via `/haptic/echo`, or in the
+`room` object returned by `/haptic`, `/beep`, and `/face` responses.
 
 ### `/face?expression=<NAME>`
 
