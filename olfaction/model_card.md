@@ -33,9 +33,9 @@ Three-level group-aware cross-validation (mean ± std over 20 seeds):
 
 | Level | Groups | Accuracy | Balanced accuracy |
 |---|---|---|---|
-| Leave-one-out | 46 | 93.3% ± 2.5% | 91.8% ± 3.0% |
-| Leave-one-session-out | 36 | 94.0% ± 3.1% | 93.0% ± 4.4% |
-| Leave-one-date-out | 9 | 92.5% ± 4.7% | 90.1% ± 7.0% |
+| Leave-one-out | 46 | 93.2% ± 2.9% | 91.6% ± 3.2% |
+| Leave-one-session-out | 36 | 94.2% ± 2.8% | 93.3% ± 3.4% |
+| Leave-one-date-out | 9 | 92.7% ± 4.6% | 90.8% ± 6.5% |
 
 ### Limitations
 

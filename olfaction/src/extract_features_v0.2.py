@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Feature extraction v0.2 -- baseline-relative features from raw sensor logs.
 
-Extracts 8 features per sample from a 10-minute (120-row) window,
-computed relative to the last 5 minutes (60 rows) of each baseline.
+Extracts 8 features per sample from a 10-minute (60-row) window,
+computed relative to the last 5 minutes (30 rows) of each baseline.
 Outputs features_v0.2.csv.
 """
 import glob
@@ -14,8 +14,8 @@ import pandas as pd
 
 DATA = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
 OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
-WINDOW = 120       # rows = 10 min @ 5 s/row
-BASELINE_REF = 60  # last 60 rows (5 min) of baseline as reference
+WINDOW = 60        # rows = 10 min @ 10 s/row
+BASELINE_REF = 30  # last 30 rows (5 min) of baseline as reference
 GAP_SEC = 120      # >2 min gap in baseline files = new segment
 
 PERFUMES = {"black_opium", "bluebell", "blackberry_bay"}
@@ -44,16 +44,16 @@ def feats(base_df, expo_df):
 
     gas_peak_d = float(g.max()) - g0
     gas_range_d = float(g.max() - g.min())
-    head = g[:30] if len(g) >= 30 else g
+    head = g[:15] if len(g) >= 15 else g
     gas_slope = float((head[-1] - head[0]) / max(len(head) - 1, 1))
 
-    tail = g[-30:] if len(g) >= 30 else g[-10:]
+    tail = g[-15:] if len(g) >= 15 else g[-5:]
     gas_recovery = (tail.mean() - g.min()) / max(abs(g.min() - g0), 0.1)
     gas_trough_pct = (float(g.min()) - g0) / g0 * 100 if g0 > 0 else 0.0
 
     import pandas as _pd
     gas_skew = float(_pd.Series(g).skew())
-    h_tail = h[-30:] if len(h) >= 30 else h[-10:]
+    h_tail = h[-15:] if len(h) >= 15 else h[-5:]
     humid_recovery = (h_tail.mean() - h.max()) / max(abs(h.max() - h0), 0.1)
     humid_std = float(np.std(h - h0))
     mid = len(g) // 2
@@ -117,7 +117,7 @@ for path in sorted(glob.glob(os.path.join(DATA, "smell_*.csv"))):
         tags = ["aft", "eve", "s3", "s4", "s5"]
         for si, part in enumerate(parts):
             sess = f"baseline_{stem(fn).split('_')[-1]}" + (f"_{tags[si]}" if len(parts) > 1 else "")
-            W = BASELINE_REF + WINDOW  # 60 + 120 = 180 rows per sample
+            W = BASELINE_REF + WINDOW  # 30 + 60 = 90 rows per sample
             n = 0
             for s in range(0, len(part) - W + 1, W):
                 if n >= 4:
@@ -144,7 +144,7 @@ feat = pd.DataFrame(rows)
 os.makedirs(OUT, exist_ok=True)
 feat.to_csv(os.path.join(OUT, "features_v0.2.csv"), index=False)
 
-print(f"{len(feat)} samples, window = {WINDOW} rows ({WINDOW*5//60} min), baseline ref = {BASELINE_REF} rows ({BASELINE_REF*5//60} min)")
+print(f"{len(feat)} samples, window = {WINDOW} rows ({WINDOW*10//60} min), baseline ref = {BASELINE_REF} rows ({BASELINE_REF*10//60} min)")
 print("\nSamples per class:")
 print(feat.label.value_counts().to_string())
 print("\nSamples per session:")
