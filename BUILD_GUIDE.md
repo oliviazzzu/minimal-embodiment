@@ -79,7 +79,7 @@ distinction means.
 | Component | Purpose |
 |---|---|
 | ESP32 development board | Main controller, WiFi |
-| BME688 (or BME280) | Temperature, humidity, pressure; gas (BME688 only) |
+| BME280 (or BME688) | Temperature, humidity, pressure; gas (BME688 only) |
 | BH1750 | Light (lux) |
 | MPU-6050 | Accelerometer + gyroscope |
 | DRV2605L breakout | Haptic driver (I2C) |
@@ -100,7 +100,7 @@ what you already have on hand — budget realistically rather than relying
 on any single estimate.
 
 **Notes on substitutions:**
-- **BME688 vs BME280.** The BME688 adds a gas-resistance channel — the
+- **BME280 vs BME688.** The BME688 adds a gas-resistance channel — the
   olfactory classifier (`olfaction/`) runs on it. The BME280 covers
   everything else (temperature, humidity, pressure) at a lower price.
   Same wiring, and the firmware auto-detects either; choose by whether
@@ -185,7 +185,7 @@ to GND from day one. We learned this the hard way. See Phase 2.
 ## Phase 1: First sense — read the room
 
 ### What you need
-- ESP32 + a BME688 or BME280 (same wiring; the BME688 adds the gas
+- ESP32 + a BME280 or BME688 (same wiring; the BME688 adds the gas
   channel used for smell) + breadboard + jumper wires
 - Soldering iron (the sensor's pin header is likely loose; both BME280
   and BME688 ship that way from common vendors)
@@ -890,11 +890,13 @@ Returns the latest room snapshot:
 Note: `/sensor/status` includes `recent_beep_echo` and `recent_touch`
 but not `recent_haptic_echo` — read that via `/haptic/echo`, or in the
 `room` object returned by `/haptic`, `/beep`, and `/face` responses.
-The `smell` block requires a BME688 and appears as
-`{ "status": "collecting", "window_size": N }` until the 90-row sliding
-window has filled (about 15 minutes after the bridge starts). With a
-BME280 there is no gas channel, so the block stays at `collecting` —
-that is expected, and everything else works normally.
+The `smell` block is an opt-in experimental prototype: it appears only
+when the bridge is started with `ENABLE_SMELL=1` and a BME688 is wired.
+It shows `{ "status": "collecting", "window_size": N }` until the
+90-row sliding window has filled (about 15 minutes), then the
+classification. The bundled model was trained on controlled near-sensor
+exposures from a single sensor — see `olfaction/model_card.md` for its
+limits before relying on the labels.
 
 ### `/face?expression=<NAME>`
 
@@ -1203,11 +1205,12 @@ Things you might add:
 
 - **Phase 12: Vision.** ESP32-CAM + OV2640. The original plan; deferred
   in the reference build.
-- **Phase 13: Olfaction refinement.** The 3-class scent classifier
-  (baseline / fresh_plant / perfume) already runs on the bridge — see
-  `olfaction/` and the `smell` block in the API reference. Extensions
-  worth exploring: hard-negative classes, novelty detection,
-  cross-environment generalization.
+- **Phase 13: Olfaction refinement.** A 3-class scent classifier
+  (baseline / fresh_plant / perfume) ships with the bridge as an opt-in
+  experimental prototype (`ENABLE_SMELL=1`) — see `olfaction/` and the
+  `smell` block in the API reference. Extensions worth exploring:
+  hard-negative classes, novelty detection, cross-environment
+  generalization.
 - **Phase 14: Portability.** Battery, enclosure, single-board form
   factor. Pick a wearable shape — wristband, pendant, pocket — and
   redesign accordingly.

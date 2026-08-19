@@ -137,13 +137,20 @@ function recentTouch(): {
 }
 
 // ---------------------------------------------------------------------------
-// Olfactory classification. Each sensor post contributes one row (gas,
-// humidity, temperature) to a sliding window; once the window is full the
-// classifier in smell.ts runs on every update. The result rides in
-// /sensor/status and room snapshots as `smell`; it is gone on restart and
-// rebuilds as the window refills.
+// Olfactory classification — experimental prototype, off by default.
+// Start the bridge with ENABLE_SMELL=1 (and a BME688 wired) to turn it on:
+// each sensor post then contributes one row (gas, humidity, temperature)
+// to a sliding window, and once the window is full the classifier in
+// smell.ts runs on every update. The result rides in /sensor/status and
+// room snapshots as `smell`; it is gone on restart and rebuilds as the
+// window refills. Off, the field is absent entirely.
+//
+// Why opt-in: the bundled model was trained on controlled near-sensor
+// exposures from a single BME688 — cross-device generalisation is
+// unvalidated. See olfaction/model_card.md before relying on its labels.
 // ---------------------------------------------------------------------------
 
+const SMELL_ENABLED = process.env.ENABLE_SMELL === "1";
 const smellBuffer = new SmellBuffer();
 
 function currentSmell():
@@ -448,7 +455,7 @@ function buildReading(args: unknown): SensorReading {
 function handleSensorUpdate(args: unknown): {
   stored: boolean;
   reading: SensorReading;
-  smell: ReturnType<typeof currentSmell>;
+  smell?: ReturnType<typeof currentSmell>;
 } {
   const reading = buildReading(args);
   latestSensorReading = reading;
@@ -456,6 +463,7 @@ function handleSensorUpdate(args: unknown): {
   if (touchEventTok) recordTouchEvent(touchEventTok);
   const env = reading.environment;
   if (
+    SMELL_ENABLED &&
     env?.gas_resistance_kohms != null &&
     env?.humidity_pct != null &&
     env?.temperature_c != null
@@ -466,7 +474,11 @@ function handleSensorUpdate(args: unknown): {
       temperature_c: env.temperature_c,
     });
   }
-  return { stored: true, reading, smell: currentSmell() };
+  return {
+    stored: true,
+    reading,
+    ...(SMELL_ENABLED && { smell: currentSmell() }),
+  };
 }
 
 function handleSensorStatus(): {
@@ -475,7 +487,7 @@ function handleSensorStatus(): {
   age_seconds: number | null;
   recent_beep_echo: (BeepEcho & { age_seconds: number }) | null;
   recent_touch: ReturnType<typeof recentTouch>;
-  smell: ReturnType<typeof currentSmell>;
+  smell?: ReturnType<typeof currentSmell>;
   instance: string;
 } {
   // Bundle the most recent beep echo too — same idea as currentRoom():
@@ -497,7 +509,7 @@ function handleSensorStatus(): {
       age_seconds: null,
       recent_beep_echo: echo,
       recent_touch: recentTouch(),
-      smell: currentSmell(),
+      ...(SMELL_ENABLED && { smell: currentSmell() }),
       instance: `${INSTANCE_ID}@${BOOT_TIME}`,
     };
   }
@@ -508,7 +520,7 @@ function handleSensorStatus(): {
     age_seconds: Math.round(age),
     recent_beep_echo: echo,
     recent_touch: recentTouch(),
-    smell: currentSmell(),
+    ...(SMELL_ENABLED && { smell: currentSmell() }),
     instance: `${INSTANCE_ID}@${BOOT_TIME}`,
   };
 }
@@ -583,7 +595,7 @@ function currentRoom(): object | null {
   if (t) room.recent_touch = t;
   // Current smell — included once the sliding window is full, so an output
   // confirmation carries the room's scent alongside its sound and touch.
-  if (smellBuffer.ready) room.smell = currentSmell();
+  if (SMELL_ENABLED && smellBuffer.ready) room.smell = currentSmell();
   return room;
 }
 
@@ -1488,6 +1500,12 @@ server.listen(PORT, () => {
   log("");
   log("Auth token (clients need this):");
   log(`  ${AUTH_TOKEN}`);
+  log("");
+  log(
+    SMELL_ENABLED
+      ? "Smell classifier: ENABLED (experimental — see olfaction/model_card.md)"
+      : "Smell classifier: off (start with ENABLE_SMELL=1 to enable)",
+  );
   log("");
   log("Endpoints (POST with JSON body, or GET with query params):");
   log("  GET /status            no auth needed");

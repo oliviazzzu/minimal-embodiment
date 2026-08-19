@@ -11,9 +11,9 @@ described in the paper:
 
 The system gives a large language model a small, real, persistent body: an
 ESP32 that senses its surroundings (environment, light, motion, sound),
-direct contact (touch pressure, skin temperature), and smell (a learned
-classifier over a gas sensor), with three output channels (haptic, OLED
-face, piezo buzzer). Two of the output channels are coupled back to input
+direct contact (touch pressure, skin temperature), and — optionally —
+experimental smell classification over a gas sensor, with three output
+channels (haptic, OLED face, piezo buzzer). Two of the output channels are coupled back to input
 channels, so the model can hear itself speak and feel itself tap — the
 "self-perception loops" described in the paper.
 

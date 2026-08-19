@@ -17,6 +17,11 @@ Real-time scent classification for a single BME688 sensor on an ESP32
 platform. The model runs inference in <1 ms from a JSON weight file
 loaded by a TypeScript module, with no external dependencies.
 
+The classifier was trained and evaluated on controlled near-sensor
+exposures (odor source placed close to the sensor). It has not been
+validated for diffuse ambient odors or fragrances worn by a person at
+conversational distance.
+
 ### Training data
 
 46 samples from recordings collected 29 May – 17 July 2026:

@@ -3,6 +3,14 @@
 Scent classification from BME688 gas-sensor signals on the
 [minimal self-perceiving embodiment](../) platform.
 
+## Enabling the classifier on the bridge
+
+The classifier ships as an opt-in experimental prototype. Start the
+bridge with `ENABLE_SMELL=1` (and a BME688 wired) to run it; the result
+appears in `/sensor/status` and room snapshots as a `smell` block. It
+was trained on controlled near-sensor exposures from a single sensor —
+see the [model card](model_card.md) for its limits.
+
 ## v0.2 — Neural Network (current)
 
 A compact neural network (8→16→3→3, 207 parameters) classifies three
