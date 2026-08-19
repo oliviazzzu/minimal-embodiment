@@ -137,8 +137,12 @@ Adafruit_SSD1306 oled(OLED_WIDTH, OLED_HEIGHT, &Wire, -1);  // -1 = no reset pin
 // FSR 402 force-sensitive resistor — analog touch input.
 // Voltage divider: 3.3V → FSR → GPIO 36 → 10kΩ → GND.
 // ADC reads 0 (no pressure) to ~4095 (hard press).
-#define FSR_PIN             36
-#define FSR_TOUCH_THRESHOLD 100   // above this ADC value → touched
+#define FSR_PIN               36
+#define FSR_TOUCH_THRESHOLD   100  // above this ADC value → touch begins
+#define FSR_RELEASE_THRESHOLD 80   // below this → touch ends; the 20-count
+                                   // hysteresis band keeps readings that
+                                   // hover near the threshold from splitting
+                                   // one sustained contact into many events
 
 // NTC 10K thermistor (MF52D) — skin temperature.
 // Voltage divider: 3.3V → 10kΩ → GPIO 39 → thermistor → GND.
@@ -242,7 +246,7 @@ void trackTouchSample(int v, unsigned long nowMs) {
     }
   } else {
     if (v > touchEventPeak) touchEventPeak = v;
-    if (v <= FSR_TOUCH_THRESHOLD) {
+    if (v <= FSR_RELEASE_THRESHOLD) {
       lastTouchEvent.end_ms = nowMs;
       lastTouchEvent.dur_ms = nowMs - touchStartMs;
       lastTouchEvent.peak   = touchEventPeak;
