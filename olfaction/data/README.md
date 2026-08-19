@@ -5,8 +5,8 @@
 46 samples extracted from BME688 gas-sensor recordings collected between
 29 May and 17 July 2026. Each row is one exposure trial (or one baseline
 window), represented by baseline-relative features computed over a
-10-minute (120-row) exposure window, with the preceding 5 minutes
-(60 rows) as the baseline reference.
+10-minute (60-row) exposure window, with the preceding 5 minutes
+(30 rows) as the baseline reference.
 
 ### Columns
 
@@ -22,7 +22,7 @@ window), represented by baseline-relative features computed over a
 | `humid_mean_d` | **model feature** | mean humidity − baseline mean |
 | `temp_d` | **model feature** | mean temperature − baseline mean |
 | `gas_trough_pct` | **model feature** | gas trough as % of baseline mean |
-| `gas_slope` | **model feature** | slope over first 30 rows of exposure |
+| `gas_slope` | **model feature** | slope over first 15 rows of exposure |
 | `gas_std` | **model feature** | standard deviation of gas resistance |
 | `gas_peak_d` | shipped, unused | max gas resistance − baseline mean |
 | `gas_range_d` | shipped, unused | gas max − gas min |
@@ -52,7 +52,7 @@ deployed model.
   same recording's own baseline, cancelling slow sensor drift and
   per-day environmental offsets by construction.
 - **Fixed 10-minute window.** All exposure features are computed over
-  120 rows (10 min at 5 s/row) after odour onset.
+  60 rows (10 min at 10 s/row) after odour onset.
 - **Raw recordings are not included.** The feature table is provided
   directly; see `src/extract_features_v0.2.py` for the extraction logic.
 
