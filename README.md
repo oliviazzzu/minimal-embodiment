@@ -30,7 +30,7 @@ src/http-bridge.ts          Single-file bridge service (no external
                             runtime dependencies). Implements the paper
                             endpoints, plus living-project extensions
                             (e.g. /melody) added on `main` after v1.0.
-firmware/sensor_body/       Arduino sketch (~1.1k lines of C++) for the
+firmware/sensor_body/       Arduino sketch (~1.6k lines of C++) for the
                             ESP32. Reads sensors, drives haptic / OLED /
                             buzzer, reports self-perception echoes.
 scripts/measure_loops.mjs   Reproduction script for §6.3: fires N reps of

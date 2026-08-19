@@ -100,10 +100,11 @@ what you already have on hand — budget realistically rather than relying
 on any single estimate.
 
 **Notes on substitutions:**
-- **BME688 vs BME280.** Get the BME688 if you are buying new — it is
-  the same wiring and a few euros more, and its gas-resistance channel
-  is what the olfactory classifier (`olfaction/`) runs on. A BME280
-  works for everything except smell; the firmware auto-detects either.
+- **BME688 vs BME280.** The BME688 adds a gas-resistance channel — the
+  olfactory classifier (`olfaction/`) runs on it. The BME280 covers
+  everything else (temperature, humidity, pressure) at a lower price.
+  Same wiring, and the firmware auto-detects either; choose by whether
+  you want the body to smell.
 - **ERM vs LRA motor.** This guide uses ERM (eccentric rotating mass)
   coin motors, which feel like a buzzy phone vibration. LRA (linear
   resonant actuator) feels sharper and more "Apple Taptic"–like, but it
@@ -184,8 +185,8 @@ to GND from day one. We learned this the hard way. See Phase 2.
 ## Phase 1: First sense — read the room
 
 ### What you need
-- ESP32 + BME688 (or BME280 — same wiring, but no gas channel and so
-  no smell later) + breadboard + jumper wires
+- ESP32 + a BME688 or BME280 (same wiring; the BME688 adds the gas
+  channel used for smell) + breadboard + jumper wires
 - Soldering iron (the sensor's pin header is likely loose; both BME280
   and BME688 ship that way from common vendors)
 - A laptop running the bridge (`src/http-bridge.ts`)
@@ -223,11 +224,15 @@ Should return something like:
     "environment": {
       "temperature_c": 26.0,
       "humidity_pct": 57,
-      "pressure_hpa": 1012.1
+      "pressure_hpa": 1012.1,
+      "gas_resistance_kohms": 285.3
     }
   }
 }
 ```
+
+The `gas_resistance_kohms` line appears with a BME688; a BME280
+reports the first three only.
 
 ### If something went wrong
 - **"Sensor not found"** — the BME280/BME688 pin header is probably
@@ -1191,16 +1196,18 @@ phase-specific sections above; this is meant to be searchable.
 
 ## Next steps
 
-The body in this guide is the minimum sufficient configuration for §6 of
-the paper — eight inputs, three outputs, two self-perception loops on a
-breadboard, tethered to USB. Things you might add:
+The body in this guide is the minimum sufficient configuration
+described in the paper — nine inputs (eight with a BME280), three
+outputs, two self-perception loops on a breadboard, tethered to USB.
+Things you might add:
 
 - **Phase 12: Vision.** ESP32-CAM + OV2640. The original plan; deferred
   in the reference build.
-- **Phase 13: Olfaction refinement.** A 3-class scent classifier
-  (baseline / fresh_plant / perfume) is included in `olfaction/` — see
-  its README and model card for details. Extensions: hard-negative
-  classes, novelty detection, cross-environment generalization.
+- **Phase 13: Olfaction refinement.** The 3-class scent classifier
+  (baseline / fresh_plant / perfume) already runs on the bridge — see
+  `olfaction/` and the `smell` block in the API reference. Extensions
+  worth exploring: hard-negative classes, novelty detection,
+  cross-environment generalization.
 - **Phase 14: Portability.** Battery, enclosure, single-board form
   factor. Pick a wearable shape — wristband, pendant, pocket — and
   redesign accordingly.
