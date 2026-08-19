@@ -61,9 +61,9 @@ This guide is the longer "build it from zero" path.
 
 A small physical body for a large language model:
 
-- **8 input modalities** (9 with BME688) — temperature, humidity,
-  atmospheric pressure, light, motion, sound, touch (pressure), skin
-  temperature (+ gas resistance on BME688)
+- **9 input modalities** — temperature, humidity, atmospheric
+  pressure, light, motion, sound, touch (pressure), skin temperature,
+  and gas resistance (BME688; a BME280 provides everything except gas)
 - **3 output channels** — haptic (motor), visual (OLED face), audio
   (piezo)
 - **2 self-perception loops** — the LLM can hear itself speak and feel
@@ -79,7 +79,7 @@ distinction means.
 | Component | Purpose |
 |---|---|
 | ESP32 development board | Main controller, WiFi |
-| BME280 (or BME688) | Temperature, humidity, pressure (+ gas, on 688) |
+| BME688 (or BME280) | Temperature, humidity, pressure; gas (BME688 only) |
 | BH1750 | Light (lux) |
 | MPU-6050 | Accelerometer + gyroscope |
 | DRV2605L breakout | Haptic driver (I2C) |
@@ -100,10 +100,10 @@ what you already have on hand — budget realistically rather than relying
 on any single estimate.
 
 **Notes on substitutions:**
-- **BME280 vs BME688.** BME688 is a superset — it adds a gas-resistance
-  sensor for VOC / "smell" sensing. The firmware supports both; BME688
-  adds a 9th input modality (gas resistance) and enables the olfaction
-  refinement work described in [Next steps](#next-steps).
+- **BME688 vs BME280.** Get the BME688 if you are buying new — it is
+  the same wiring and a few euros more, and its gas-resistance channel
+  is what the olfactory classifier (`olfaction/`) runs on. A BME280
+  works for everything except smell; the firmware auto-detects either.
 - **ERM vs LRA motor.** This guide uses ERM (eccentric rotating mass)
   coin motors, which feel like a buzzy phone vibration. LRA (linear
   resonant actuator) feels sharper and more "Apple Taptic"–like, but it
@@ -184,7 +184,8 @@ to GND from day one. We learned this the hard way. See Phase 2.
 ## Phase 1: First sense — read the room
 
 ### What you need
-- ESP32 + BME280 (or BME688) + breadboard + jumper wires
+- ESP32 + BME688 (or BME280 — same wiring, but no gas channel and so
+  no smell later) + breadboard + jumper wires
 - Soldering iron (the sensor's pin header is likely loose; both BME280
   and BME688 ship that way from common vendors)
 - A laptop running the bridge (`src/http-bridge.ts`)
@@ -886,7 +887,9 @@ but not `recent_haptic_echo` — read that via `/haptic/echo`, or in the
 `room` object returned by `/haptic`, `/beep`, and `/face` responses.
 The `smell` block requires a BME688 and appears as
 `{ "status": "collecting", "window_size": N }` until the 90-row sliding
-window has filled (about 15 minutes after the bridge starts).
+window has filled (about 15 minutes after the bridge starts). With a
+BME280 there is no gas channel, so the block stays at `collecting` —
+that is expected, and everything else works normally.
 
 ### `/face?expression=<NAME>`
 
