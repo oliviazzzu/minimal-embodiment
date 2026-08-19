@@ -869,6 +869,14 @@ Returns the latest room snapshot:
   },
   "recent_touch": {
     "duration_ms": 800, "peak": 1842, "age_seconds": 3
+  },
+  "smell": {
+    "label": "baseline", "displayLabel": "baseline", "confidence": 0.97,
+    "probabilities": {
+      "baseline": 0.97, "fresh_plant (lemon / orange / mint)": 0.02,
+      "perfume": 0.01
+    },
+    "window_size": 90
   }
 }
 ```
@@ -876,6 +884,9 @@ Returns the latest room snapshot:
 Note: `/sensor/status` includes `recent_beep_echo` and `recent_touch`
 but not `recent_haptic_echo` — read that via `/haptic/echo`, or in the
 `room` object returned by `/haptic`, `/beep`, and `/face` responses.
+The `smell` block requires a BME688 and appears as
+`{ "status": "collecting", "window_size": N }` until the 90-row sliding
+window has filled (about 15 minutes after the bridge starts).
 
 ### `/face?expression=<NAME>`
 

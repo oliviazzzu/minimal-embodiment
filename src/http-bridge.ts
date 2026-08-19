@@ -17,6 +17,7 @@
  */
 import { createServer, IncomingMessage, ServerResponse } from "node:http";
 import { randomBytes } from "node:crypto";
+import { SmellBuffer, SmellResult } from "./smell.js";
 
 // Paths the bridge handles as API endpoints. Any other path returns 404.
 const API_PATHS: ReadonlySet<string> = new Set([
@@ -133,6 +134,24 @@ function recentTouch(): {
       (Date.now() - new Date(lastTouch.timestamp).getTime()) / 1000,
     ),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Olfactory classification. Each sensor post contributes one row (gas,
+// humidity, temperature) to a sliding window; once the window is full the
+// classifier in smell.ts runs on every update. The result rides in
+// /sensor/status and room snapshots as `smell`; it is gone on restart and
+// rebuilds as the window refills.
+// ---------------------------------------------------------------------------
+
+const smellBuffer = new SmellBuffer();
+
+function currentSmell():
+  | (SmellResult & { window_size: number })
+  | { status: "collecting"; window_size: number } {
+  return smellBuffer.ready
+    ? { ...smellBuffer.classify()!, window_size: smellBuffer.windowSize }
+    : { status: "collecting", window_size: smellBuffer.windowSize };
 }
 
 // Default 3737. Override with PORT=xxxx if needed.
@@ -429,12 +448,25 @@ function buildReading(args: unknown): SensorReading {
 function handleSensorUpdate(args: unknown): {
   stored: boolean;
   reading: SensorReading;
+  smell: ReturnType<typeof currentSmell>;
 } {
   const reading = buildReading(args);
   latestSensorReading = reading;
   const touchEventTok = asOptionalString(getField(args, "touch_event"));
   if (touchEventTok) recordTouchEvent(touchEventTok);
-  return { stored: true, reading };
+  const env = reading.environment;
+  if (
+    env?.gas_resistance_kohms != null &&
+    env?.humidity_pct != null &&
+    env?.temperature_c != null
+  ) {
+    smellBuffer.push({
+      gas_kohms: env.gas_resistance_kohms,
+      humidity_pct: env.humidity_pct,
+      temperature_c: env.temperature_c,
+    });
+  }
+  return { stored: true, reading, smell: currentSmell() };
 }
 
 function handleSensorStatus(): {
@@ -443,6 +475,7 @@ function handleSensorStatus(): {
   age_seconds: number | null;
   recent_beep_echo: (BeepEcho & { age_seconds: number }) | null;
   recent_touch: ReturnType<typeof recentTouch>;
+  smell: ReturnType<typeof currentSmell>;
   instance: string;
 } {
   // Bundle the most recent beep echo too — same idea as currentRoom():
@@ -464,6 +497,7 @@ function handleSensorStatus(): {
       age_seconds: null,
       recent_beep_echo: echo,
       recent_touch: recentTouch(),
+      smell: currentSmell(),
       instance: `${INSTANCE_ID}@${BOOT_TIME}`,
     };
   }
@@ -474,6 +508,7 @@ function handleSensorStatus(): {
     age_seconds: Math.round(age),
     recent_beep_echo: echo,
     recent_touch: recentTouch(),
+    smell: currentSmell(),
     instance: `${INSTANCE_ID}@${BOOT_TIME}`,
   };
 }
@@ -546,6 +581,9 @@ function currentRoom(): object | null {
   }
   const t = recentTouch();
   if (t) room.recent_touch = t;
+  // Current smell — included once the sliding window is full, so an output
+  // confirmation carries the room's scent alongside its sound and touch.
+  if (smellBuffer.ready) room.smell = currentSmell();
   return room;
 }
 
