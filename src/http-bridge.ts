@@ -1353,11 +1353,16 @@ async function dispatch(
     return;
   }
 
-  // Figure out the payload. POST takes JSON; GET takes query params. Every
-  // write endpoint accepts both forms, picked by method.
+  // Figure out the payload. GET takes query params; POST takes the JSON
+  // body merged over any query params (body wins on collision), so flags
+  // like `wait_echo` work in either position on every write endpoint.
   let args: unknown;
   if (method === "POST") {
-    args = await readJsonBody(req);
+    const body = await readJsonBody(req);
+    args = {
+      ...queryToArgs(query),
+      ...(typeof body === "object" && body !== null ? body : {}),
+    };
   } else if (method === "GET") {
     args = queryToArgs(query);
   } else {
