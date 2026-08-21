@@ -595,9 +595,9 @@ No new wiring — physical re-mounting of the existing motor.
   peak and RMS of the AC deviation from the window's own mean.
 - The bridge derives `snr = rms / floor_rms` and a boolean `felt` —
   true when either statistic exceeds 3× the same echo's own floor.
-- `GET /haptic?effect=...&wait_echo=true` selects the measured path and
-  holds the response until the echo returns. Plain calls without
-  `wait_echo` fire immediately and skip measurement entirely.
+- Every haptic fire is measured. `GET /haptic?effect=...&wait_echo=true`
+  holds the response until the echo returns; calls without `wait_echo`
+  return immediately and the echo is read from `GET /haptic/echo`.
 - Measurement runs in the firmware's main loop with PWR_MGMT_1 re-pokes
   — recent ESP32 cores corrupt MPU reads after a DRV2605 write (see the
   comment block in the sketch).
@@ -943,10 +943,12 @@ Two input shapes:
   `heartbeat`, `knock`, `hello`, `alert`.
 - `effect_id=<N>` — raw DRV2605L library ID (1–123).
 
-Optional `wait_echo=true` — selects the measured path: the firmware
-samples a pre-fire control window, fires, samples a signal window, and
-the response's `recent_haptic_echo` reports the effect name, `peak_g`,
-`snr`, and `felt`.
+Every fire is measured: the firmware samples a pre-fire control window,
+fires, samples a signal window, and the echo reports the effect name,
+`peak_g`, `snr`, and `felt`. Optional `wait_echo=true` holds the
+response until this fire's own echo lands (in `recent_haptic_echo`);
+without it the response returns at once and the echo is read from
+`GET /haptic/echo`.
 
 ### `/beep/echo`
 

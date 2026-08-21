@@ -1272,30 +1272,21 @@ void commandPollTask(void* param) {
 
       if (type == "haptic") {
         int effectId = extractJsonInt(body, "effect_id");
-        // "echo":1 marks a measured fire (the bridge sets it for
-        // wait_echo requests). Plain taps skip the whole measurement
-        // dance: fire right here, right now — lowest latency.
-        int wantEcho = extractJsonInt(body, "echo");
         if (effectId > 0) {
-          if (wantEcho == 1) {
-            // Measured fire: loop() runs floor window → fire → signal
-            // window (MPU sampling only works there; see the core-quirk
-            // note). Wait for it so the echo rides the very next poll.
-            echoRequestEffectId = effectId;
-            echoRequest = true;
-            unsigned long deadline = millis() + 3000;
-            while (echoRequest && millis() < deadline) {
-              vTaskDelay(pdMS_TO_TICKS(10));
-            }
-            if (!echoRequest && lastHapticEcho.valid) {
-              Serial.printf("[cmd] haptic effect %d measured\n", effectId);
-            } else {
-              Serial.printf("[cmd] haptic effect %d (echo timeout or MPU offline)\n",
-                            effectId);
-            }
+          // Measured fire: loop() runs floor window → fire → signal
+          // window (MPU sampling only works there; see the core-quirk
+          // note). Wait for it so the echo rides the very next poll.
+          echoRequestEffectId = effectId;
+          echoRequest = true;
+          unsigned long deadline = millis() + 3000;
+          while (echoRequest && millis() < deadline) {
+            vTaskDelay(pdMS_TO_TICKS(10));
+          }
+          if (!echoRequest && lastHapticEcho.valid) {
+            Serial.printf("[cmd] haptic effect %d measured\n", effectId);
           } else {
-            fireHaptic(effectId);
-            Serial.printf("[cmd] haptic effect %d\n", effectId);
+            Serial.printf("[cmd] haptic effect %d (echo timeout or MPU offline)\n",
+                          effectId);
           }
         }
       } else if (type == "haptic_baseline") {

@@ -616,11 +616,10 @@ function currentRoom(): object | null {
 // than the microcontroller can drain, the oldest commands get dropped —
 // losing the middle of a rapid-fire sequence is less bad than stalling.
 type PendingCommand =
-  // `echo: 1` marks a measured fire: the firmware routes it through the
+  // Every haptic is a measured fire: the firmware routes it through the
   // loop()-context choreography (floor window → fire → signal window)
-  // and reports the full echo statistics back. Plain taps omit it and
-  // fire instantly in the poll task with zero measurement overhead.
-  | { type: "haptic"; effect_id: number; echo?: number }
+  // and reports the full echo statistics back.
+  | { type: "haptic"; effect_id: number }
   | { type: "haptic_baseline" }
   | { type: "face"; expression: string }
   | { type: "beep"; frequency: number; duration_ms: number }
@@ -908,27 +907,22 @@ async function handleHaptic(args: unknown): Promise<{
     );
   }
 
-  // Mirror of /beep's wait_echo: opt-in synchronous mode that blocks the
-  // response until the haptic-echo for THIS event arrives back from the
-  // microcontroller. wait_echo also selects the measured-fire path
-  // (echo: 1) — plain taps skip measurement entirely and fire with the
-  // lowest possible latency.
+  // Every haptic fire is measured. wait_echo controls only whether THIS
+  // response blocks until the echo lands; asynchronous callers read
+  // /haptic/echo afterwards. Mirrors /beep, where the microphone always
+  // hears the tone.
   const wantEcho = isTruthyParam(getField(args, "wait_echo"));
 
   // Mark "now" BEFORE queueing so we can detect when the echo for THIS
   // haptic event (vs. a previous one still in latestHapticEcho) lands.
   const queuedAt = Date.now();
-  if (wantEcho) {
-    pendingMeasuredFire = {
-      effect_id: effectId,
-      name: resolvedName ?? String(effectId),
-    };
-  }
-  queueCommand({
-    type: "haptic",
+  // Every fire is measured, so every fire registers its name for the
+  // echo to carry — including the ones nobody waits for.
+  pendingMeasuredFire = {
     effect_id: effectId,
-    ...(wantEcho ? { echo: 1 } : {}),
-  });
+    name: resolvedName ?? String(effectId),
+  };
+  queueCommand({ type: "haptic", effect_id: effectId });
 
   let echoWaited = false;
   if (wantEcho) {
